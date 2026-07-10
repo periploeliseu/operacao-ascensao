@@ -1,297 +1,159 @@
-import React, { useState, useEffect, useRef } from "react";
-import { C, reqFor, uid, BOSS_CAP, SKINS, MARKET, titleFor, SEED, fmt, ago, mkNewPlayer, PETS, ROULETTE } from "./data/constants.js";
-import { applyXp, applyCoins, nowMinutes } from "./logic/game.js";
-import { loadState, saveState, clearState } from "./logic/storage.js";
+import React, { useState, useEffect, useCallback } from "react";
+import { C, reqFor, BOSS_CAP, SKINS, titleFor, fmt, ago } from "./data/constants.js";
 import { Avatar, HeroFigure, BossFigure } from "./components/figures.jsx";
 import { Bar, Chip, Coin, btnStyle, inputStyle, cardStyle } from "./components/ui.jsx";
 import BattleOverlay from "./components/BattleOverlay.jsx";
-import { ProvaForm, AddMission, IdeaForm, BossForm } from "./components/forms.jsx";
+import { BossForm } from "./components/forms.jsx";
+import Login from "./Login.jsx";
+import {
+  aoMudarSessao, sair, carregarTudo, salvarPerfil,
+  criarMissao, desativarMissao, enviarConclusao, avaliarConclusao,
+  convocarChefao, mudarStatusChefao, excluirChefao, lancarAjuste,
+} from "./logic/api.js";
+
+/* ============================================================
+   OPERAÇÃO ASCENSÃO — Fase 3.1 (banco de dados central)
+   Os dados agora vivem no Supabase. Este arquivo só EXIBE e
+   dispara ações da camada de API (src/logic/api.js).
+   ============================================================ */
+
+/* Aparência determinística do avatar a partir do id (o banco não guarda cor) */
+const TONES = ["#c98d63", "#8d5a3b", "#a06a44", "#d9a06f", "#b97a50", "#e3b48a", "#7a4a2e", "#caa27a"];
+const HAIRS = ["#141420", "#241a12", "#101018", "#2b1a10", "#15161e", "#1c1410", "#30231a", "#0d0d12"];
+function hashId(id) { let h = 0; for (const ch of String(id)) h = (h * 31 + ch.charCodeAt(0)) >>> 0; return h; }
+function decorar(colab) {
+  const h = hashId(colab.id);
+  return { ...colab, name: colab.nome, nick: colab.apelido, tone: TONES[h % TONES.length], hair: HAIRS[(h >> 3) % HAIRS.length], skin: colab.skin || "elite" };
+}
+
+/* Nível calculado a partir do XP total do ledger */
+function nivelDe(totalXp) {
+  let xp = Math.max(0, totalXp), lvl = 1;
+  while (xp >= reqFor(lvl) && lvl < 200) { xp -= reqFor(lvl); lvl++; }
+  return { level: lvl, xp, req: reqFor(lvl) };
+}
+
+const dataBr = (iso) => new Date(iso).toLocaleDateString("pt-BR", { day: "2-digit", month: "long", year: "numeric" });
 
 export default function App() {
-  const [state, setState] = useState(null);
+  const [sessao, setSessao] = useState(undefined); /* undefined = verificando */
+  const [dados, setDados] = useState(null);
+  const [erro, setErro] = useState(null);
   const [view, setView] = useState("dashboard");
-  const [gestor, setGestor] = useState(false);
-  const [activeId, setActiveId] = useState("p1");
-  const [skinTab, setSkinTab] = useState("SKINS");
-  const [battle, setBattle] = useState(null);
   const [toast, setToast] = useState(null);
-  const [pinModal, setPinModal] = useState(false);
-  const [pinInput, setPinInput] = useState("");
-  const [cover, setCover] = useState(true);
-  const [wheel, setWheel] = useState(null);
+  const [battle, setBattle] = useState(null);
   const [editNick, setEditNick] = useState(false);
   const [nickDraft, setNickDraft] = useState("");
-  const [terminal, setTerminal] = useState(() => { try { return localStorage.getItem("ascensao:terminal") === "1"; } catch { return false; } });
-  const saveT = useRef(null);
+  const [extratoDe, setExtratoDe] = useState(null);
 
-  /* carregar / salvar */
-  useEffect(() => {
-    (async () => {
-      try {
-        const data = await loadState();
-        if (data) {
-          if (!data.config.gestorPin) data.config.gestorPin = "2026";
-          setState(data);
-        } else setState(SEED);
-      } catch { setState(SEED); }
-    })();
+  useEffect(() => { aoMudarSessao(setSessao); }, []);
+
+  const recarregar = useCallback(async () => {
+    try { setDados(await carregarTudo()); setErro(null); }
+    catch (e) { setErro(e.message || String(e)); }
   }, []);
+
   useEffect(() => {
-    if (!state) return;
-    clearTimeout(saveT.current);
-    saveT.current = setTimeout(async () => {
-      await saveState(state);
-    }, 600);
-  }, [state]);
+    if (!sessao) return;
+    recarregar();
+    const iv = setInterval(recarregar, 30000);            /* sincroniza a cada 30s */
+    const foco = () => recarregar();                       /* e ao voltar pra aba  */
+    window.addEventListener("focus", foco);
+    return () => { clearInterval(iv); window.removeEventListener("focus", foco); };
+  }, [sessao, recarregar]);
 
-  /* virada do dia: renova missões fixas/diárias e aplica punições das diárias */
-  useEffect(() => {
-    if (!state) return;
-    const today = new Date().toDateString();
-    if (state.lastRollover === today) return;
-    setState((s) => {
-      if (s.lastRollover === today) return s;
-      let next = { ...s, lastRollover: today };
-      if (s.lastRollover) {
-        s.missions.filter((m) => m.renew).forEach((m) => {
-          if (m.punish) {
-            s.players.forEach((p) => {
-              if (!m.completedBy.includes(p.id)) {
-                const r = applyXp(next, p.id, -m.xp, `não concluiu a diária '${m.name}' (-${fmt(m.xp)} XP, -5 ${s.config.coinName})`);
-                next = r.next;
-                next = { ...next, players: next.players.map((x) => (x.id === p.id ? { ...x, coins: x.coins - 5 } : x)) };
-              }
-            });
-          }
-        });
-        next = { ...next, missions: next.missions.map((m) => (m.renew ? { ...m, completedBy: [] } : m)) };
+  const notify = (msg, cor = C.green) => { setToast({ msg, cor }); setTimeout(() => setToast(null), 3500); };
+  const agir = async (promessa, msgOk) => {
+    const e = await promessa;
+    if (e) notify(e, C.red); else { if (msgOk) notify(msgOk); recarregar(); }
+  };
+
+  if (sessao === undefined) return <Tela msg="Verificando acesso…" />;
+  if (!sessao) return <Login />;
+  if (erro) return <Tela msg={`Erro ao carregar: ${erro}`} extra={<button onClick={recarregar} style={btnStyle(C.violetHot)}>Tentar de novo</button>} />;
+  if (!dados) return <Tela msg="Carregando Operação Ascensão…" />;
+
+  /* ---------- montagem dos dados derivados (do ledger) ---------- */
+  const colabs = dados.colabs.map(decorar);
+  const me = colabs.find((c) => c.id === sessao.user.id);
+  if (!me) return <Tela msg="Seu usuário ainda não tem ficha de colaborador. Fale com o gestor." extra={<button onClick={() => sair()} style={btnStyle(C.violetHot, true)}>Sair</button>} />;
+  const gestor = !!me.is_gestor;
+
+  const saldo = {};
+  colabs.forEach((c) => { saldo[c.id] = { xp: 0, moedas: 0, mes: 0 }; });
+  const mesAtual = new Date().getMonth(), anoAtual = new Date().getFullYear();
+  dados.eventos.forEach((ev) => {
+    const s = saldo[ev.colaborador_id]; if (!s) return;
+    s.xp += ev.xp; s.moedas += ev.moedas;
+    const d = new Date(ev.criado_em);
+    if (ev.xp > 0 && d.getMonth() === mesAtual && d.getFullYear() === anoAtual) s.mes += ev.xp;
+  });
+  const nivel = nivelDe(saldo[me.id].xp);
+  const ranked = [...colabs].sort((a, b) => saldo[b.id].mes - saldo[a.id].mes);
+  const myRank = ranked.findIndex((c) => c.id === me.id) + 1;
+
+  /* chefão: dano = missões ☠ APROVADAS de cada um, com teto individual */
+  const chefao = dados.chefao;
+  const cap = chefao ? Math.max(1, Math.ceil(chefao.hp_max / Math.max(1, colabs.length))) : BOSS_CAP;
+  const dano = {};
+  if (chefao) {
+    colabs.forEach((c) => { dano[c.id] = 0; });
+    dados.conclusoes.forEach((cl) => {
+      if (cl.status === "aprovada" && cl.missoes?.chefao_id === chefao.id && dano[cl.colaborador_id] !== undefined) {
+        dano[cl.colaborador_id] = Math.min(cap, dano[cl.colaborador_id] + cl.missoes.xp);
       }
-      return next;
     });
-  }, [state && state.lastRollover]);
-
-  /* prazo do chefão estourou com HP sobrando → derrota da equipe */
-  useEffect(() => {
-    if (!state || !state.boss.deadline || state.boss.defeated || state.boss.failed) return;
-    if (Date.now() > state.boss.deadline && state.boss.hp > 0) {
-      setState((s) => ({ ...s, boss: { ...s.boss, failed: true } }));
-      setBattle({ pid: activeId, dmg: 0, kind: "fail", hpBefore: state.boss.hp, maxHp: state.boss.maxHp, cap: state.boss.cap });
-    }
-  }, [state, activeId]);
-
-  /* garante que o colaborador ativo sempre exista (após exclusões) */
-  useEffect(() => {
-    if (state && state.players.length && !state.players.find((p) => p.id === activeId)) {
-      setActiveId(state.players[0].id);
-    }
-  }, [state, activeId]);
-
-
-  if (!state) return <div style={{ minHeight: "100vh", background: C.bg, color: C.dim, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "system-ui" }}>Carregando Operação Ascensão…</div>;
-
-  const me = state.players.find((p) => p.id === activeId) || state.players[0];
-  const notify = (msg, color = C.green) => { setToast({ msg, color }); setTimeout(() => setToast(null), 3200); };
-
-  /* ---------- AÇÕES ---------- */
-  const gainXp = (pid, amount, label, coins = 0) => {
-    setState((s) => {
-      let { next, leveled } = applyXp(s, pid, amount, label);
-      if (coins) next = applyCoins(next, pid, coins);
-      if (leveled) {
-        const p = next.players.find((x) => x.id === pid);
-        next = { ...next, feed: [{ id: uid(), who: pid, text: `alcançou o nível ${p.level}`, xp: 0, t: Date.now() }, ...next.feed] };
-      }
-      return next;
-    });
-  };
-
-  /* ---------- GESTÃO DE COLABORADORES ---------- */
-  const addPlayer = (name, role, sched) => {
-    const p = mkNewPlayer(name, role, sched);
-    setState((s) => ({ ...s, players: [...s.players, p], feed: [{ id: uid(), who: p.id, text: "entrou para a Operação Ascensão", xp: 0, t: Date.now() }, ...s.feed] }));
-    setActiveId(p.id);
-    notify(`${name} entrou na equipe.`);
-  };
-  const deletePlayer = (pid) => {
-    setState((s) => {
-      const contributions = { ...s.boss.contributions };
-      delete contributions[pid];
-      return {
-        ...s,
-        players: s.players.filter((p) => p.id !== pid),
-        feed: s.feed.filter((f) => f.who !== pid),
-        provas: s.provas.filter((x) => x.pid !== pid),
-        ideas: s.ideas.filter((x) => x.pid !== pid),
-        redeems: s.redeems.filter((x) => x.pid !== pid),
-        boss: { ...s.boss, contributions },
-      };
-    });
-    notify("Colaborador excluído. Convoque um novo chefão para recalcular o HP da equipe.", C.orange);
-  };
-  const resetPlayer = (pid) => {
-    setState((s) => ({ ...s, players: s.players.map((p) => (p.id === pid ? { ...p, level: 1, xp: 0, coins: 0, streak: 0, totalMonth: 0, lastCheckin: null, skin: "elite", ownedSkins: ["elite"] } : p)) }));
-    notify("Personagem resetado: nível 1, 0 XP, 0 moedas.");
-  };
-  const adjustCoins = (pid, amt) => {
-    setState((s) => ({ ...s, players: s.players.map((p) => (p.id === pid ? { ...p, coins: Math.max(0, p.coins + amt) } : p)), feed: [{ id: uid(), who: pid, text: `recebeu ajuste de ${amt > 0 ? "+" : ""}${fmt(amt)} FlixCoins do gestor`, xp: 0, t: Date.now() }, ...s.feed] }));
-    notify("FlixCoins ajustadas.");
-  };
-  const adjustXp = (pid, amt) => gainXp(pid, amt, `recebeu ajuste de ${amt > 0 ? "+" : ""}${fmt(amt)} XP do gestor`);
-
-  const completeMission = (m) => {
-    if (m.completedBy.includes(activeId)) return notify("Você já concluiu esta missão.", C.orange);
-    setState((s) => {
-      let next = { ...s, missions: s.missions.map((x) => (x.id === m.id ? { ...x, completedBy: [...x.completedBy, activeId] } : x)) };
-      const r = applyXp(next, activeId, m.xp, `concluiu a missão '${m.name}'`);
-      next = applyCoins(r.next, activeId, m.coins || 0);
-      if (m.boss && !next.boss.defeated && !next.boss.failed && next.boss.hp > 0) {
-        const contrib = next.boss.contributions[activeId] || 0;
-        const cap = next.boss.cap || BOSS_CAP;
-        const dmg = Math.min(m.xp, cap - contrib, next.boss.hp);
-        if (dmg > 0) {
-          const hpBefore = next.boss.hp;
-          const newContrib = contrib + dmg;
-          const hpAfter = hpBefore - dmg;
-          next = { ...next, boss: { ...next.boss, hp: hpAfter, defeated: hpAfter <= 0, contributions: { ...next.boss.contributions, [activeId]: newContrib } } };
-          const kind = hpAfter <= 0 ? "victory" : newContrib >= cap ? "combo" : "hit";
-          setTimeout(() => setBattle({ pid: activeId, dmg, kind, hpBefore, maxHp: next.boss.maxHp, cap }), 50);
-        }
-      }
-      return next;
-    });
-    if (m.coins) setTimeout(() => notify(`🎁 Prêmio surpresa: +${m.coins} ${state.config.coinName}!`, C.gold), 400);
-  };
-
-  const applyProva = (pid, nome, nota) => {
-    const xp = Math.round(nota * state.config.xpPerPoint);
-    setState((s) => ({ ...applyXp(s, pid, xp, `fez ${nota} pontos na prova '${nome || "Avaliação"}'`).next, provas: [{ id: uid(), pid, nome: nome || "Avaliação", nota, xp, t: Date.now() }, ...s.provas] }));
-    notify(`Nota ${nota} → ${fmt(xp)} XP aplicados.`);
-  };
-
-  const submitIdea = (title, desc) => {
-    setState((s) => ({ ...s, ideas: [{ id: uid(), pid: activeId, title, desc, status: "pendente", t: Date.now() }, ...s.ideas] }));
-    notify("Ideia enviada ao gestor. Boa!");
-  };
-
-  const evalIdea = (idea, grade) => {
-    const xp = state.config.ideaXp[grade];
-    setState((s) => {
-      const ideas = s.ideas.map((i) => (i.id === idea.id ? { ...i, status: "avaliada", xp } : i));
-      // LEI: colaborador NÃO vê o grau da avaliação, só a recompensa
-      return { ...applyXp({ ...s, ideas }, idea.pid, xp, `teve uma ideia reconhecida: '${idea.title}'`).next };
-    });
-    notify(`Ideia avaliada. +${fmt(xp)} XP para o autor.`);
-  };
-
-  const buy = (item, kind) => {
-    if (me.coins < item.price) return notify("FlixCoins insuficientes. Farme mais XP.", C.red);
-    setState((s) => {
-      let next = applyCoins(s, activeId, -item.price);
-      if (kind === "skin") {
-        next = { ...next, players: next.players.map((p) => (p.id === activeId ? { ...p, ownedSkins: [...p.ownedSkins, item.id], skin: item.id } : p)) };
-      } else if (kind === "pet") {
-        next = { ...next, players: next.players.map((p) => (p.id === activeId ? { ...p, ownedPets: [...(p.ownedPets || []), item.id], pet: item.id } : p)) };
-      } else {
-        next = { ...next, redeems: [{ id: uid(), pid: activeId, item: item.name, price: item.price, t: Date.now(), status: "pendente" }, ...next.redeems] };
-      }
-      return { ...next, feed: [{ id: uid(), who: activeId, text: kind === "skin" ? `desbloqueou a skin '${item.name}'` : kind === "pet" ? `adotou o pet '${item.name}'` : `resgatou '${item.name}' no mercado`, xp: 0, t: Date.now() }, ...next.feed] };
-    });
-    notify(kind === "skin" ? `Skin '${item.name}' equipada!` : kind === "pet" ? `${item.name} agora anda com você!` : `Resgate de '${item.name}' registrado. O gestor vai providenciar.`);
-  };
-
-  /* Roleta da Pontualidade: só no terminal oficial, só na janela do turno (início até +5min) */
-  const spinWheel = () => {
-    const today = new Date().toDateString();
-    if (me.lastCheckin === today) return notify("Você já girou a roleta hoje. Amanhã tem mais.", C.orange);
-    if (!terminal) return notify("A roleta só gira no terminal oficial do estoque. Gestor: autorize este aparelho em Configurações.", C.orange);
-    const [h, mm] = me.schedule.split(":").map(Number);
-    const startMin = h * 60 + mm;
-    const now = nowMinutes(state.config);
-    if (now < startMin) return notify(`A roleta abre às ${me.schedule} em ponto e fecha 5 minutos depois.`, C.orange);
-    if (now > startMin + 5) {
-      setState((s) => ({ ...s, players: s.players.map((p) => (p.id === activeId ? { ...p, lastCheckin: today, streak: 0 } : p)) }));
-      if (state.config.latePenalty) gainXp(activeId, -state.config.penaltyValue, "perdeu XP por atraso na roleta da pontualidade");
-      return notify("Janela perdida. Sequência zerada.", C.red);
-    }
-    const prize = ROULETTE[Math.floor(Math.random() * ROULETTE.length)];
-    setWheel({ prize, spinning: true });
-    setState((s) => ({ ...s, players: s.players.map((p) => (p.id === activeId ? { ...p, lastCheckin: today, streak: p.streak + 1 } : p)) }));
-    setTimeout(() => {
-      if (prize.xp) gainXp(activeId, prize.xp, `girou a roleta da pontualidade: ${prize.label} 🔥`);
-      if (prize.coins) setState((s) => ({ ...s, players: s.players.map((p) => (p.id === activeId ? { ...p, coins: p.coins + prize.coins } : p)), feed: [{ id: uid(), who: activeId, text: `girou a roleta da pontualidade: ${prize.label} 🔥`, xp: 0, t: Date.now() }, ...s.feed] }));
-      setWheel((w) => w && { ...w, spinning: false });
-    }, 2600);
-  };
-
-  const resetAll = async () => {
-    await clearState();
-    setState(SEED); notify("Dados resetados para o padrão.");
-  };
-
-  /* capa da temporada (LEI 4: todo mês existe algo novo) */
-  if (cover) {
-    const seasonLabel = state.config.seasonTitle || `Temporada ${new Date().toLocaleDateString("pt-BR", { month: "long", year: "numeric" })}`;
-    return (
-      <div onClick={() => setCover(false)} style={{ minHeight: "100vh", cursor: "pointer", background: `radial-gradient(900px 500px at 50% 20%, #2a104f 0%, ${C.bg} 60%)`, color: C.text, fontFamily: "'Segoe UI', system-ui, sans-serif", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 8, textAlign: "center", padding: 20 }}>
-        <svg width="70" height="70" viewBox="0 0 40 40"><path d="M6 30 L16 10 L23 24 L28 16 L34 30 Z" fill="none" stroke={C.blue} strokeWidth="3" strokeLinejoin="round" /></svg>
-        <div style={{ fontSize: "clamp(26px, 6vw, 44px)", fontWeight: 900, letterSpacing: 4, textShadow: `0 0 30px ${C.violetHot}88` }}>OPERAÇÃO ASCENSÃO</div>
-        <div style={{ color: C.violetHot, fontWeight: 700, letterSpacing: 2, textTransform: "uppercase" }}>{seasonLabel}</div>
-        <button style={{ ...btnStyle(C.violetHot), marginTop: 26, padding: "13px 44px", fontSize: 15, letterSpacing: 2 }}>INICIAR</button>
-        <div style={{ color: C.dim2, fontSize: 12, marginTop: 8 }}>toque em qualquer lugar para entrar</div>
-      </div>
-    );
   }
+  const danoTotal = chefao ? Object.values(dano).reduce((a, b) => a + b, 0) : 0;
+  const hpAtual = chefao ? Math.max(0, chefao.hp_max - danoTotal) : 0;
+  const prazoEstourado = chefao && chefao.status === "ativo" && Date.now() > new Date(chefao.prazo).getTime() && hpAtual > 0;
 
-  /* primeira execução: equipe vazia → tela de criação */
-  if (state.players.length === 0) {
-    return (
-      <div style={{ minHeight: "100vh", background: `radial-gradient(1200px 600px at 70% -10%, #1a1040 0%, ${C.bg} 55%)`, color: C.text, fontFamily: "'Segoe UI', system-ui, sans-serif", display: "flex", alignItems: "center", justifyContent: "center" }}>
-        <SetupScreen onCreate={(pin, name, role, sched) => {
-          if (pin !== state.config.gestorPin) return notify("PIN incorreto.", C.red);
-          setGestor(true);
-          addPlayer(name, role, sched);
-        }} />
-        {toast && (
-          <div style={{ position: "fixed", bottom: 22, right: 22, zIndex: 99, background: C.panel, border: `1.5px solid ${toast.color}`, color: C.text, padding: "12px 18px", borderRadius: 12, fontSize: 13.5, fontWeight: 600 }}>{toast.msg}</div>
-        )}
-      </div>
-    );
-  }
+  const minhasConclusoes = dados.conclusoes.filter((cl) => cl.colaborador_id === me.id);
+  const statusMissao = (m) => {
+    const cl = minhasConclusoes.find((x) => x.missao_id === m.id && x.status !== "reprovada");
+    return cl ? cl.status : null; /* null = disponível */
+  };
+  const pendentes = dados.conclusoes.filter((cl) => cl.status === "pendente");
 
-  /* ---------- NAV ---------- */
+  const aprovar = async (cl, sim) => {
+    /* prepara a animação ANTES de aplicar, para capturar o HP anterior */
+    let luta = null;
+    if (sim && chefao && chefao.status === "ativo" && cl.missoes?.chefao_id === chefao.id) {
+      const antes = dano[cl.colaborador_id] || 0;
+      const d = Math.min(cl.missoes.xp, cap - antes, hpAtual);
+      if (d > 0) {
+        const kind = hpAtual - d <= 0 ? "victory" : antes + d >= cap ? "combo" : "hit";
+        luta = { pid: cl.colaborador_id, dmg: d, kind, hpBefore: hpAtual, maxHp: chefao.hp_max, cap };
+        if (kind === "victory") mudarStatusChefao(chefao.id, "derrotado");
+      }
+    }
+    await agir(avaliarConclusao(cl, sim), sim ? "Aprovada — prêmio lançado no extrato." : "Reprovada. A missão volta a ficar disponível.");
+    if (luta) setBattle(luta);
+  };
+
   const NAV = [
     ["dashboard", "▦", "Dashboard"],
     ["missoes", "◎", "Missões"],
-    ["colaboradores", "👥", "Colaboradores"],
+    ...(gestor ? [["aprovacoes", "✔", `Aprovações${pendentes.length ? ` (${pendentes.length})` : ""}`]] : []),
     ["chefao", "☠", "Chefão"],
-    ["provas", "✎", "Provas"],
-    ["ideias", "💡", "Banco de Ideias"],
     ["ranking", "♛", "Ranking"],
-    ["conquistas", "🏅", "Conquistas"],
-    ["loja", "🛍", "Loja de Skins", true],
-    ["mercado", "🛒", "Mercado"],
+    ["extrato", "📅", "Extrato"],
+    ...(gestor ? [["equipe", "👥", "Equipe"]] : []),
     ["manual", "📖", "Manual"],
-    ["config", "⚙", "Configurações"],
   ];
 
-  const ranked = [...state.players].sort((a, b) => b.totalMonth - a.totalMonth);
-  const myRank = ranked.findIndex((p) => p.id === activeId) + 1;
-  const req = reqFor(me.level);
-
-  /* ============================ RENDER ============================ */
   return (
     <div style={{ minHeight: "100vh", background: `radial-gradient(1200px 600px at 70% -10%, #1a1040 0%, ${C.bg} 55%)`, color: C.text, fontFamily: "'Segoe UI', system-ui, sans-serif", display: "flex" }}>
-
       {/* ================= SIDEBAR ================= */}
       <aside style={{ width: 218, background: C.panel, borderRight: `1px solid ${C.border}`, padding: "18px 12px", display: "flex", flexDirection: "column", gap: 4, position: "sticky", top: 0, height: "100vh" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "4px 8px 18px" }}>
           <svg width="34" height="34" viewBox="0 0 40 40"><path d="M6 30 L16 10 L23 24 L28 16 L34 30 Z" fill="none" stroke={C.blue} strokeWidth="3.4" strokeLinejoin="round" /></svg>
           <div>
             <div style={{ fontWeight: 800, fontSize: 14, lineHeight: 1.15 }}>OPERAÇÃO<br />ASCENSÃO</div>
-            <div style={{ color: C.blue, fontSize: 10, fontWeight: 700, letterSpacing: 2 }}>MVP</div>
+            <div style={{ color: C.blue, fontSize: 10, fontWeight: 700, letterSpacing: 2 }}>ONLINE</div>
           </div>
         </div>
-        {NAV.map(([id, ic, label, nov]) => (
+        {NAV.map(([id, ic, label]) => (
           <button key={id} onClick={() => setView(id)} style={{
             display: "flex", alignItems: "center", gap: 11, padding: "10px 12px", borderRadius: 10,
             background: view === id ? `linear-gradient(90deg, ${C.violetDeep}44, transparent)` : "transparent",
@@ -299,17 +161,17 @@ export default function App() {
             color: view === id ? C.text : C.dim, fontSize: 13.5, fontWeight: 600, cursor: "pointer", textAlign: "left",
           }}>
             <span style={{ width: 18, textAlign: "center" }}>{ic}</span>{label}
-            {nov && <Chip color={C.violetHot}>novo</Chip>}
           </button>
         ))}
         <div style={{ marginTop: "auto", borderTop: `1px solid ${C.border}`, paddingTop: 14 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "0 6px 10px" }}>
-            <div style={{ width: 36, height: 36, borderRadius: "50%", background: `linear-gradient(135deg, ${C.violet}, ${C.blue})`, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800 }}>ET</div>
-            <div><div style={{ fontSize: 13, fontWeight: 700 }}>Eliseu Tavares</div><div style={{ fontSize: 11, color: C.dim }}>Gestor</div></div>
+            <Avatar p={me} size={36} ring={gestor ? C.gold : undefined} />
+            <div style={{ minWidth: 0 }}>
+              <div style={{ fontSize: 13, fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{me.nick || me.name}</div>
+              <div style={{ fontSize: 11, color: gestor ? C.gold : C.dim }}>{gestor ? "Gestor" : me.funcao}</div>
+            </div>
           </div>
-          <button onClick={() => { if (gestor) { setGestor(false); notify("Modo colaborador ativado.", C.blue); } else { setPinInput(""); setPinModal(true); } }} style={{ ...btnStyle(gestor ? C.gold : C.violetHot, !gestor), width: "100%" }}>
-            {gestor ? "◉ Modo Gestor ATIVO" : "🔒 Modo Gestor"}
-          </button>
+          <button onClick={() => sair()} style={{ ...btnStyle(C.dim, true), width: "100%" }}>Sair da conta</button>
         </div>
       </aside>
 
@@ -322,7 +184,7 @@ export default function App() {
             {editNick ? (
               <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
                 <input autoFocus value={nickDraft} onChange={(e) => setNickDraft(e.target.value.slice(0, 18))} placeholder="Nome de jogo" style={{ ...inputStyle, width: 160, padding: "7px 10px" }} />
-                <button onClick={() => { setState((s) => ({ ...s, players: s.players.map((p) => (p.id === activeId ? { ...p, nick: nickDraft.trim() || null } : p)) })); setEditNick(false); }} style={{ ...btnStyle(C.violetHot), padding: "7px 12px", fontSize: 12 }}>OK</button>
+                <button onClick={() => { agir(salvarPerfil(me.id, { apelido: nickDraft.trim() || null }), "Nome de jogo salvo."); setEditNick(false); }} style={{ ...btnStyle(C.violetHot), padding: "7px 12px", fontSize: 12 }}>OK</button>
               </div>
             ) : (
               <div>
@@ -330,454 +192,270 @@ export default function App() {
                   {me.nick || me.name}
                   <button onClick={() => { setNickDraft(me.nick || ""); setEditNick(true); }} title="Escolher nome de jogo" style={{ background: "none", border: "none", color: C.dim, cursor: "pointer", fontSize: 13, padding: 0 }}>✏️</button>
                 </div>
-                <div style={{ color: C.blue, fontSize: 12 }}>{me.nick ? `${me.name} · ${me.role}` : me.role}</div>
+                <div style={{ color: C.blue, fontSize: 12 }}>{me.nick ? `${me.name} · ${me.funcao}` : me.funcao}</div>
               </div>
             )}
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <div className="glow" style={{ border: `2px solid ${C.violetHot}`, borderRadius: 10, padding: "4px 12px", textAlign: "center" }}>
+            <div style={{ border: `2px solid ${C.violetHot}`, borderRadius: 10, padding: "4px 12px", textAlign: "center" }}>
               <div style={{ fontSize: 9, color: C.dim, letterSpacing: 1 }}>NÍVEL</div>
-              <div style={{ fontWeight: 900, fontSize: 20, color: C.violetHot }}>{me.level}</div>
+              <div style={{ fontWeight: 900, fontSize: 20, color: C.violetHot }}>{nivel.level}</div>
             </div>
             <div style={{ width: 210 }}>
-              <div style={{ fontSize: 11, color: C.dim, marginBottom: 4 }}>XP</div>
-              <Bar value={me.xp} max={req} />
-              <div style={{ fontSize: 11, color: C.dim, textAlign: "right", marginTop: 3 }}>{fmt(me.xp)} / {fmt(req)}</div>
+              <div style={{ fontSize: 11, color: C.dim, marginBottom: 4 }}>XP · {titleFor(nivel.level)}</div>
+              <Bar value={nivel.xp} max={nivel.req} />
+              <div style={{ fontSize: 11, color: C.dim, textAlign: "right", marginTop: 3 }}>{fmt(nivel.xp)} / {fmt(nivel.req)}</div>
             </div>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <Coin size={26} />
-            <div><div style={{ fontSize: 10, color: C.dim, letterSpacing: 1 }}>{state.config.coinName.toUpperCase()}</div><div style={{ fontWeight: 800, fontSize: 17 }}>{fmt(me.coins)}</div></div>
+            <div><div style={{ fontSize: 10, color: C.dim, letterSpacing: 1 }}>FLIXCOINS</div><div style={{ fontWeight: 800, fontSize: 17 }}>{fmt(saldo[me.id].moedas)}</div></div>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <span style={{ fontSize: 22 }}>🏆</span>
             <div><div style={{ fontSize: 10, color: C.dim, letterSpacing: 1 }}>RANKING</div><div style={{ fontWeight: 800, fontSize: 17 }}>{myRank}º</div></div>
           </div>
           <div style={{ marginLeft: "auto", textAlign: "right" }}>
-            <div style={{ fontSize: 11, color: C.orange, fontWeight: 700 }}>Sequência 🔥</div>
-            <div style={{ fontWeight: 900, fontSize: 19, color: C.orange }}>{me.streak} dias</div>
+            <div style={{ fontSize: 11, color: C.dim }}>XP no mês</div>
+            <div style={{ fontWeight: 900, fontSize: 19, color: C.violetHot }}>{fmt(saldo[me.id].mes)}</div>
           </div>
         </header>
 
-        {/* ============ VIEWS ============ */}
+        {/* ============ DASHBOARD ============ */}
         {view === "dashboard" && (
-          <div style={{ display: "grid", gridTemplateColumns: "minmax(420px, 7fr) minmax(340px, 5fr)", gap: 16, marginTop: 16 }}>
-            {/* Painel do personagem */}
-            <section style={{ ...cardStyle, background: `linear-gradient(160deg, #0d1226 0%, #090d1c 60%), ${C.panel}`, position: "relative", overflow: "hidden" }}>
-              <div style={{ display: "flex", gap: 14 }}>
-                <div style={{ display: "flex", flexDirection: "column", gap: 10, width: 168 }}>
-                  {[["CABELO", "Padrão"], ["TRAJE", SKINS.find((s) => s.id === me.skin).name], ["ACESSÓRIO", "Luvas Táticas"], ["CALÇADO", "Botas de Carga"], ["EMBLEMA", "Guardião"]].map(([k, v]) => (
-                    <div key={k} style={{ display: "flex", gap: 9, alignItems: "center", background: C.panel2, border: `1px solid ${C.border}`, borderRadius: 10, padding: 8 }}>
-                      <div style={{ width: 34, height: 34, borderRadius: 8, background: `linear-gradient(135deg, ${C.violetDeep}55, #0b0f1e)`, border: `1px solid ${C.violet}44`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 15 }}>
-                        {{ CABELO: "💇", TRAJE: "🧥", ACESSÓRIO: "🧤", CALÇADO: "🥾", EMBLEMA: "🛡️" }[k]}
-                      </div>
-                      <div><div style={{ fontSize: 9, color: C.dim, letterSpacing: 1 }}>{k}</div><div style={{ fontSize: 11.5, fontWeight: 600 }}>{v}</div></div>
+          <div style={{ display: "grid", gridTemplateColumns: "minmax(340px, 5fr) minmax(340px, 7fr)", gap: 16, marginTop: 16 }}>
+            <section style={{ ...cardStyle, textAlign: "center" }}>
+              <HeroFigure p={me} height={300} />
+              <div style={{ marginTop: 10, fontWeight: 800, color: C.violetHot }}>{titleFor(nivel.level).toUpperCase()}</div>
+              <div style={{ fontSize: 12, color: C.dim, marginTop: 4 }}>{me.funcao} · Região {me.regiao} · Turno {String(me.turno).slice(0, 5)}</div>
+            </section>
+            <section style={{ display: "grid", gap: 16, alignContent: "start" }}>
+              <div style={cardStyle}>
+                <b style={{ fontSize: 12, letterSpacing: 1.5, color: C.dim }}>MINHAS MISSÕES</b>
+                {dados.missoes.slice(0, 4).map((m) => {
+                  const st = statusMissao(m);
+                  return (
+                    <div key={m.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 0", borderBottom: `1px solid ${C.border}55`, fontSize: 13 }}>
+                      <span>{m.chefao_id ? "☠" : "◎"}</span>
+                      <span style={{ flex: 1 }}>{m.nome} <span style={{ color: C.dim }}>· +{fmt(m.xp)} XP</span></span>
+                      {st === "pendente" ? <Chip color={C.orange}>Aguardando gestor</Chip>
+                        : st === "aprovada" ? <Chip color={C.green}>Concluída</Chip>
+                        : <button onClick={() => agir(enviarConclusao(m.id, me.id), "Enviado para aprovação do gestor.")} style={{ ...btnStyle(C.violetHot), padding: "6px 14px", fontSize: 12 }}>Concluí</button>}
                     </div>
-                  ))}
-                </div>
-                <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", position: "relative" }}>
-                  <HeroFigure p={me} height={330} />
-                  {me.pet && <div className="pet-float" style={{ position: "absolute", bottom: 20, right: "16%", fontSize: 46 }}>{(PETS.find((x) => x.id === me.pet) || {}).icon}</div>}
-                </div>
-                <div style={{ width: 190, display: "flex", flexDirection: "column", gap: 12 }}>
-                  <div style={{ background: C.panel2, border: `1px solid ${C.border}`, borderRadius: 10, padding: 12 }}>
-                    <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: 1, color: C.dim, marginBottom: 10 }}>ATRIBUTOS</div>
-                    {Object.entries(me.attrs).map(([k, v]) => (
-                      <div key={k} style={{ display: "flex", justifyContent: "space-between", fontSize: 12, padding: "5px 0", borderBottom: `1px solid ${C.border}55` }}>
-                        <span style={{ color: C.dim }}>{k}</span><b>{v}</b>
-                      </div>
-                    ))}
-                  </div>
-                  <div style={{ background: C.panel2, border: `1px solid ${C.violet}44`, borderRadius: 10, padding: 12, textAlign: "center" }}>
-                    <div style={{ fontSize: 10, color: C.dim, letterSpacing: 1, marginBottom: 6 }}>TÍTULO ATUAL</div>
-                    <div style={{ fontSize: 30 }}>◆</div>
-                    <div style={{ fontWeight: 800, fontSize: 13, color: C.violetHot }}>{titleFor(me.level).toUpperCase()}</div>
-                  </div>
-                </div>
+                  );
+                })}
+                <button onClick={() => setView("missoes")} style={{ ...btnStyle(C.violetHot, true), marginTop: 10, padding: "6px 14px", fontSize: 12 }}>Ver todas</button>
               </div>
-              <div style={{ display: "flex", gap: 12, marginTop: 14, alignItems: "center" }}>
-                <button onClick={spinWheel} style={btnStyle(C.violetHot)}>🎰 Roleta da Pontualidade</button>
-                <div style={{ flex: 1, background: C.panel2, border: `1px solid ${C.border}`, borderRadius: 10, padding: "10px 14px" }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: C.dim }}>
-                    <span>Próximo nível — <b style={{ color: C.text }}>{titleFor(me.level + 1)}</b></span>
-                    <span style={{ border: `1.5px solid ${C.violetHot}`, borderRadius: 6, padding: "0 8px", color: C.violetHot, fontWeight: 800 }}>NÍVEL {me.level + 1}</span>
-                  </div>
-                  <div style={{ marginTop: 6 }}><Bar value={me.xp} max={req} /></div>
-                </div>
+              <div style={cardStyle}>
+                <b style={{ fontSize: 12, letterSpacing: 1.5, color: C.dim }}>ÚLTIMAS CONQUISTAS DA EQUIPE</b>
+                {dados.eventos.slice(0, 6).map((ev) => {
+                  const p = colabs.find((c) => c.id === ev.colaborador_id);
+                  if (!p) return null;
+                  return (
+                    <div key={ev.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 0", borderBottom: `1px solid ${C.border}55`, fontSize: 12.5 }}>
+                      <Avatar p={p} size={28} />
+                      <span style={{ flex: 1 }}><b style={{ color: C.blue }}>{p.nick || p.name.split(" ")[0]}</b> {ev.descricao || ev.origem}</span>
+                      {ev.xp !== 0 && <b style={{ color: ev.xp > 0 ? C.green : C.red }}>{ev.xp > 0 ? "+" : ""}{fmt(ev.xp)} XP</b>}
+                      <span style={{ color: C.dim2, fontSize: 11 }}>{ago(new Date(ev.criado_em).getTime())}</span>
+                    </div>
+                  );
+                })}
               </div>
-            </section>
-
-            {/* Loja lateral (skins) */}
-            <section style={cardStyle}>
-              <div style={{ display: "flex", gap: 6, marginBottom: 14 }}>
-                {["SKINS", "EMOTES", "EFEITOS", "ITENS"].map((t) => (
-                  <button key={t} onClick={() => setSkinTab(t)} style={{ ...btnStyle(C.violetHot, skinTab !== t), padding: "7px 14px", fontSize: 11 }}>{t}</button>
-                ))}
-              </div>
-              {skinTab === "SKINS" ? (
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: 12 }}>
-                  {SKINS.map((sk) => {
-                    const owned = me.ownedSkins.includes(sk.id);
-                    const locked = sk.lockedLevel && me.level < sk.lockedLevel;
-                    const equipped = me.skin === sk.id;
-                    return (
-                      <div key={sk.id} style={{ background: C.panel2, border: `1.5px solid ${equipped ? C.violetHot : C.border}`, borderRadius: 12, padding: 10, textAlign: "center" }}>
-                        <div style={{ height: 92, display: "flex", alignItems: "center", justifyContent: "center", filter: locked ? "brightness(.25)" : "none" }}>
-                          <HeroFigure p={{ ...me, skin: sk.id }} height={90} />
-                        </div>
-                        <div style={{ fontSize: 12, fontWeight: 700, margin: "6px 0 4px" }}>{locked ? "Skin Secreta" : sk.name}</div>
-                        {locked ? (
-                          <div style={{ fontSize: 11, color: C.dim }}>🔒 Nível {sk.lockedLevel}</div>
-                        ) : equipped ? (
-                          <Chip color={C.green}>Equipada</Chip>
-                        ) : owned ? (
-                          <button onClick={() => setState((s) => ({ ...s, players: s.players.map((p) => (p.id === activeId ? { ...p, skin: sk.id } : p)) }))} style={{ ...btnStyle(C.violetHot, true), padding: "5px 12px", fontSize: 11 }}>Equipar</button>
-                        ) : (
-                          <button onClick={() => buy(sk, "skin")} style={{ ...btnStyle(C.gold, true), padding: "5px 12px", fontSize: 11, display: "inline-flex", gap: 6, alignItems: "center" }}><Coin size={13} /> {fmt(sk.price)}</button>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              ) : skinTab === "ITENS" ? (
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: 12 }}>
-                  {PETS.map((pt) => {
-                    const owned = (me.ownedPets || []).includes(pt.id);
-                    const equipped = me.pet === pt.id;
-                    return (
-                      <div key={pt.id} style={{ background: C.panel2, border: `1.5px solid ${equipped ? C.violetHot : C.border}`, borderRadius: 12, padding: 12, textAlign: "center" }}>
-                        <div style={{ fontSize: 40 }}>{pt.icon}</div>
-                        <div style={{ fontSize: 12, fontWeight: 700, margin: "6px 0 4px" }}>{pt.name}</div>
-                        {equipped ? <Chip color={C.green}>Junto de você</Chip>
-                          : owned ? <button onClick={() => setState((s) => ({ ...s, players: s.players.map((p) => (p.id === activeId ? { ...p, pet: pt.id } : p)) }))} style={{ ...btnStyle(C.violetHot, true), padding: "5px 12px", fontSize: 11 }}>Equipar</button>
-                          : <button onClick={() => buy(pt, "pet")} style={{ ...btnStyle(C.gold, true), padding: "5px 12px", fontSize: 11, display: "inline-flex", gap: 6, alignItems: "center" }}><Coin size={13} /> {fmt(pt.price)}</button>}
-                      </div>
-                    );
-                  })}
-                </div>
-              ) : (
-                <div style={{ color: C.dim, fontSize: 13, padding: 30, textAlign: "center" }}>“{skinTab}” chega na próxima temporada. LEI 4: todo mês existe algo novo.</div>
-              )}
-              <div style={{ marginTop: 14, background: `linear-gradient(90deg, ${C.violetDeep}33, transparent)`, border: `1px solid ${C.violet}44`, borderRadius: 12, padding: "12px 14px", display: "flex", alignItems: "center", gap: 12 }}>
-                <span style={{ fontSize: 28 }}>🧰</span>
-                <div style={{ flex: 1 }}>
-                  <b style={{ fontSize: 13 }}>Pacote Guardião</b>
-                  <div style={{ fontSize: 11, color: C.violetHot }}>Conjunto completo com desconto!</div>
-                </div>
-                <button style={{ ...btnStyle(C.gold), display: "flex", gap: 6, alignItems: "center" }} onClick={() => notify("Pacotes entram na fase 2.", C.orange)}>6.500 <Coin size={14} /></button>
-              </div>
-            </section>
-
-            {/* Equipe */}
-            <section style={cardStyle}>
-              <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: 1.5, color: C.dim, marginBottom: 12 }}>EQUIPE — clique para trocar de colaborador</div>
-              <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-                {state.players.map((p) => (
-                  <button key={p.id} onClick={() => setActiveId(p.id)} style={{
-                    background: C.panel2, border: `1.5px solid ${p.id === activeId ? C.violetHot : C.border}`, borderRadius: 12,
-                    padding: "10px 12px", cursor: "pointer", textAlign: "center", color: C.text, minWidth: 92,
-                  }}>
-                    <Avatar p={p} size={44} ring={p.id === activeId ? C.violetHot : undefined} />
-                    <div style={{ fontSize: 12, fontWeight: 700, marginTop: 6 }}>{p.nick || p.name.split(" ")[0]}</div>
-                    {p.nick && <div style={{ fontSize: 9.5, color: C.dim2 }}>{p.name.split(" ")[0]}</div>}
-                    <div style={{ fontSize: 10.5, color: C.dim }}>Nível {p.level}</div>
-                    <div style={{ fontSize: 10.5, color: C.violetHot, fontWeight: 700 }}>{fmt(p.totalMonth)} XP</div>
-                  </button>
-                ))}
-              </div>
-            </section>
-
-            {/* Últimas conquistas */}
-            <section style={cardStyle}>
-              <div style={{ fontSize: 12, fontWeight: 800, letterSpacing: 1.5, color: C.dim, marginBottom: 12 }}>ÚLTIMAS CONQUISTAS</div>
-              {state.feed.slice(0, 6).map((f) => {
-                const p = state.players.find((x) => x.id === f.who);
-                return (
-                  <div key={f.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 0", borderBottom: `1px solid ${C.border}55` }}>
-                    <Avatar p={p} size={30} />
-                    <div style={{ flex: 1, fontSize: 12.5 }}><b style={{ color: C.blue }}>{p.name.split(" ")[0]}</b> {f.text}</div>
-                    {f.xp !== 0 && <b style={{ color: f.xp > 0 ? C.green : C.red, fontSize: 12.5 }}>{f.xp > 0 ? "+" : ""}{fmt(f.xp)} XP</b>}
-                    <span style={{ color: C.dim2, fontSize: 11 }}>{ago(f.t)}</span>
-                  </div>
-                );
-              })}
             </section>
           </div>
         )}
 
+        {/* ============ MISSÕES ============ */}
         {view === "missoes" && (
           <div style={{ marginTop: 16, display: "grid", gap: 12 }}>
-            <h2 style={{ margin: 0, fontSize: 20 }}>Missões — {me.name.split(" ")[0]}</h2>
-            <p style={{ color: C.dim, fontSize: 13, margin: 0 }}>LEI 1: tudo gera XP. Missões marcadas com ☠ causam dano no Chefão.</p>
-            {state.missions.map((m) => {
-              const done = m.completedBy.includes(activeId);
+            <h2 style={{ margin: 0, fontSize: 20 }}>Missões</h2>
+            <p style={{ color: C.dim, fontSize: 13, margin: 0 }}>Marcou "Concluí"? A solicitação vai pra fila do gestor. O prêmio (XP visível + moedas surpresa) cai no extrato só depois da aprovação.</p>
+            {dados.missoes.map((m) => {
+              const st = statusMissao(m);
               return (
-                <div key={m.id} style={{ ...cardStyle, display: "flex", alignItems: "center", gap: 14, opacity: done ? 0.55 : 1 }}>
-                  <span style={{ fontSize: 22 }}>{m.boss ? "☠" : "◎"}</span>
+                <div key={m.id} style={{ ...cardStyle, display: "flex", alignItems: "center", gap: 14, opacity: st === "aprovada" ? 0.55 : 1 }}>
+                  <span style={{ fontSize: 22 }}>{m.chefao_id ? "☠" : "◎"}</span>
                   <div style={{ flex: 1 }}>
-                    <b style={{ fontSize: 14 }}>{m.name}</b>
-                    <div style={{ fontSize: 12, color: C.dim }}>+{fmt(m.xp)} XP {m.renew ? (m.punish ? <span style={{ color: C.red }}>· Diária — pune se não concluir</span> : <span>· Fixa — renova à meia-noite</span>) : <span>· Esporádica</span>} {m.boss && <span style={{ color: C.orange }}>· vinculada ao Chefão</span>}</div>
+                    <b style={{ fontSize: 14 }}>{m.nome}</b>
+                    <div style={{ fontSize: 12, color: C.dim }}>
+                      +{fmt(m.xp)} XP · {m.tipo === "diaria" ? "Diária" : m.tipo === "fixa" ? "Fixa" : "Esporádica"}
+                      {m.chefao_id && <span style={{ color: C.orange }}> · vinculada ao Chefão</span>}
+                      {gestor && m.moedas_ocultas > 0 && <span style={{ color: C.gold }}> · 🤫 {fmt(m.moedas_ocultas)} moedas (oculto)</span>}
+                    </div>
                   </div>
-                  {done ? <Chip color={C.green}>Concluída</Chip> : <button onClick={() => completeMission(m)} style={btnStyle(C.violetHot)}>Concluir</button>}
-                  {gestor && <button onClick={() => { setState((s) => ({ ...s, missions: s.missions.filter((x) => x.id !== m.id) })); notify("Missão excluída."); }} style={{ ...btnStyle(C.red, true), padding: "7px 10px" }}>🗑</button>}
+                  {st === "pendente" ? <Chip color={C.orange}>Aguardando gestor</Chip>
+                    : st === "aprovada" ? <Chip color={C.green}>Concluída</Chip>
+                    : <button onClick={() => agir(enviarConclusao(m.id, me.id), "Enviado para aprovação do gestor.")} style={btnStyle(C.violetHot)}>Concluí</button>}
+                  {gestor && <button onClick={() => agir(desativarMissao(m.id), "Missão desativada.")} style={{ ...btnStyle(C.red, true), padding: "7px 10px" }}>🗑</button>}
                 </div>
               );
             })}
-            {gestor && (
-              <button onClick={() => { setState((s) => ({ ...s, missions: s.missions.map((m) => ({ ...m, completedBy: [] })) })); notify("Conclusões limpas — missões liberadas para todos."); }} style={{ ...btnStyle(C.orange, true), justifySelf: "start" }}>
-                ♻ Limpar conclusões (libera as missões de novo)
-              </button>
-            )}
-            {gestor && <AddMission onAdd={(name, xp, boss, coins, renew, punish) => setState((s) => ({ ...s, missions: [...s.missions, { id: uid(), name, xp, boss, coins, renew, punish, completedBy: [] }] }))} />}
+            {gestor && <NovaMissao chefao={chefao} onCriar={(m) => agir(criarMissao(m), "Missão criada.")} />}
           </div>
         )}
 
-        {view === "colaboradores" && (
-          <div style={{ marginTop: 16, display: "grid", gap: 14 }}>
-            <h2 style={{ margin: 0, fontSize: 20 }}>Colaboradores</h2>
-            {!gestor && <p style={{ color: C.orange, fontSize: 13, margin: 0 }}>Criação, exclusão e ajustes exigem o Modo Gestor.</p>}
-            {state.players.map((p) => (
-              <PlayerAdmin key={p.id} p={p} gestor={gestor}
-                onReset={() => resetPlayer(p.id)}
-                onDelete={() => deletePlayer(p.id)}
-                onCoins={(v) => adjustCoins(p.id, v)}
-                onXp={(v) => adjustXp(p.id, v)} />
-            ))}
-            {gestor && <AddPlayerForm onAdd={addPlayer} />}
+        {/* ============ APROVAÇÕES (gestor) ============ */}
+        {view === "aprovacoes" && gestor && (
+          <div style={{ marginTop: 16, display: "grid", gap: 12 }}>
+            <h2 style={{ margin: 0, fontSize: 20 }}>Fila de Aprovação</h2>
+            <p style={{ color: C.dim, fontSize: 13, margin: 0 }}>Confere se o serviço foi feito DE VERDADE. Aprovou: XP + moedas caem no extrato e, se a missão for ☠, o chefão apanha. Reprovou: nada acontece e a missão volta a ficar disponível.</p>
+            {pendentes.length === 0 && <div style={{ ...cardStyle, color: C.dim2, fontSize: 13 }}>Fila limpa. Ninguém aguardando.</div>}
+            {pendentes.map((cl) => {
+              const p = colabs.find((c) => c.id === cl.colaborador_id);
+              if (!p) return null;
+              return (
+                <div key={cl.id} style={{ ...cardStyle, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+                  <Avatar p={p} size={36} />
+                  <div style={{ flex: 1, minWidth: 200 }}>
+                    <b style={{ fontSize: 13.5 }}>{p.nick || p.name}</b> <span style={{ color: C.dim, fontSize: 13 }}>diz que concluiu</span>
+                    <div style={{ fontSize: 13 }}>{cl.missoes?.chefao_id ? "☠ " : ""}{cl.missoes?.nome} <span style={{ color: C.dim }}>· +{fmt(cl.missoes?.xp || 0)} XP{cl.missoes?.moedas_ocultas ? ` · 🤫 ${fmt(cl.missoes.moedas_ocultas)} moedas` : ""}</span></div>
+                    <div style={{ fontSize: 11, color: C.dim2 }}>{ago(new Date(cl.enviada_em).getTime())}</div>
+                  </div>
+                  <button onClick={() => aprovar(cl, true)} style={btnStyle(C.green)}>✔ Aprovar</button>
+                  <button onClick={() => aprovar(cl, false)} style={btnStyle(C.red, true)}>✘ Reprovar</button>
+                </div>
+              );
+            })}
           </div>
         )}
 
+        {/* ============ CHEFÃO ============ */}
         {view === "chefao" && (
           <div style={{ marginTop: 16 }}>
-            <div style={{ ...cardStyle, textAlign: "center", background: `radial-gradient(500px 260px at 50% 0%, #2a104f55, ${C.panel})` }}>
-              <Chip color={C.orange}>{state.boss.kind}</Chip>
-              <h2 style={{ margin: "10px 0 2px", fontSize: 26, letterSpacing: 1 }}>{state.boss.name}</h2>
-              {state.boss.focus && <div style={{ color: C.blue, fontSize: 13, marginBottom: 4 }}>🎯 Foco: {state.boss.focus}</div>}
-              <div style={{ color: C.gold, fontSize: 13, marginBottom: 10 }}>
-                🎁 Prêmio: {gestor ? <b>{state.boss.reward}{state.boss.extra ? ` + ${state.boss.extra}` : ""} <span style={{ color: C.dim }}>(oculto p/ equipe)</span></b> : <b>??? — derrotem o chefão para descobrir</b>}
-              </div>
-              <BossFigure size={210} />
-              <div style={{ maxWidth: 480, margin: "10px auto" }}>
-                <Bar value={state.boss.hp} max={state.boss.maxHp} color={C.red} h={14} />
-                <div style={{ fontSize: 13, color: C.dim, marginTop: 5 }}>
-                  {fmt(state.boss.hp)} / {fmt(state.boss.maxHp)} HP
-                  {state.boss.defeated && <b style={{ color: C.gold }}> — DERROTADO! 🏆 Prêmio: {state.boss.reward}{state.boss.extra ? ` + ${state.boss.extra}` : ""}</b>}
-                  {state.boss.failed && <b style={{ color: C.red }}> — ELE VENCEU. Preparem-se para a revanche.</b>}
-                  {state.boss.maxHp === 0 && <b style={{ color: C.orange }}> — aguardando o gestor convocar</b>}
+            {chefao ? (
+              <div style={{ ...cardStyle, textAlign: "center", background: `radial-gradient(500px 260px at 50% 0%, #2a104f55, ${C.panel})` }}>
+                <Chip color={C.orange}>Chefão</Chip>
+                <h2 style={{ margin: "10px 0 2px", fontSize: 26, letterSpacing: 1 }}>{chefao.nome}</h2>
+                {chefao.foco && <div style={{ color: C.blue, fontSize: 13, marginBottom: 4 }}>🎯 Foco: {chefao.foco}</div>}
+                <div style={{ color: C.gold, fontSize: 13, marginBottom: 10 }}>
+                  🎁 Prêmio: {gestor || chefao.status === "derrotado"
+                    ? <b>{chefao.premio_oculto}{chefao.extra ? ` + ${chefao.extra}` : ""}{gestor && chefao.status !== "derrotado" ? " (oculto p/ equipe)" : ""}</b>
+                    : <b>??? — derrotem o chefão para descobrir</b>}
                 </div>
-                {state.boss.deadline && !state.boss.defeated && !state.boss.failed && state.boss.maxHp > 0 && (
-                  <div style={{ fontSize: 12.5, color: C.orange, marginTop: 4 }}>⏳ Tempo restante: {Math.max(0, Math.ceil((state.boss.deadline - Date.now()) / 864e5))} dia(s)</div>
+                <BossFigure size={200} />
+                <div style={{ maxWidth: 480, margin: "10px auto" }}>
+                  <Bar value={hpAtual} max={chefao.hp_max} color={C.red} h={14} />
+                  <div style={{ fontSize: 13, color: C.dim, marginTop: 5 }}>
+                    {fmt(hpAtual)} / {fmt(chefao.hp_max)} HP
+                    {chefao.status === "derrotado" && <b style={{ color: C.gold }}> — DERROTADO! 🏆</b>}
+                    {chefao.status === "falhou" && <b style={{ color: C.red }}> — ELE VENCEU.</b>}
+                    {prazoEstourado && <b style={{ color: C.red }}> — prazo estourado!</b>}
+                  </div>
+                  {chefao.status === "ativo" && !prazoEstourado && (
+                    <div style={{ fontSize: 12.5, color: C.orange, marginTop: 4 }}>⏳ Tempo restante: {Math.max(0, Math.ceil((new Date(chefao.prazo).getTime() - Date.now()) / 864e5))} dia(s)</div>
+                  )}
+                </div>
+                <p style={{ color: C.dim, fontSize: 13, maxWidth: 560, margin: "6px auto" }}>
+                  Cota individual: <b style={{ color: C.text }}>{fmt(cap)} XP</b> de dano em missões ☠ aprovadas. A equipe vence junta ou não vence.
+                </p>
+                {gestor && (
+                  <div style={{ display: "flex", gap: 10, justifyContent: "center", marginTop: 10, flexWrap: "wrap" }}>
+                    {prazoEstourado && <button onClick={() => { agir(mudarStatusChefao(chefao.id, "falhou"), "Derrota registrada."); setBattle({ pid: me.id, dmg: 0, kind: "fail", hpBefore: hpAtual, maxHp: chefao.hp_max, cap }); }} style={btnStyle(C.red)}>Declarar derrota da equipe</button>}
+                    <button onClick={() => agir(mudarStatusChefao(chefao.id, "arquivado"), "Chefão arquivado (histórico preservado).")} style={btnStyle(C.orange, true)}>Arquivar</button>
+                    <button onClick={() => { if (window.confirm(`Excluir '${chefao.nome}' de vez? As missões vinculadas sobrevivem desvinculadas.`)) agir(excluirChefao(chefao.id), "Chefão excluído."); }} style={btnStyle(C.red, true)}>🗑 Excluir</button>
+                  </div>
                 )}
               </div>
-              <p style={{ color: C.dim, fontSize: 13, maxWidth: 560, margin: "6px auto" }}>
-                Cada colaborador precisa causar <b style={{ color: C.text }}>{fmt(state.boss.cap || BOSS_CAP)} XP</b> de dano via missões ☠ antes do prazo. Se UM não bater a cota, o chefão vence. A equipe vence junta ou não vence.
-              </p>
-            </div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", gap: 12, marginTop: 14 }}>
-              {state.players.map((p) => {
-                const c = state.boss.contributions[p.id] || 0;
-                const cap = state.boss.cap || BOSS_CAP;
-                return (
-                  <div key={p.id} style={cardStyle}>
-                    <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 8 }}>
-                      <Avatar p={p} size={36} />
-                      <div><b style={{ fontSize: 13 }}>{p.nick || p.name.split(" ")[0]}</b><div style={{ fontSize: 11, color: c >= cap ? C.green : C.dim }}>{c >= cap ? "Meta batida! ⚔️" : "Em combate"}</div></div>
-                    </div>
-                    <Bar value={c} max={cap} color={c >= cap ? C.green : C.violetHot} />
-                    <div style={{ fontSize: 11.5, color: C.dim, marginTop: 4, textAlign: "right" }}>{fmt(c)} / {fmt(cap)} XP de dano</div>
-                  </div>
-                );
-              })}
-            </div>
-            {gestor && <BossForm onSummon={(b) => { setState((s) => ({ ...s, boss: { ...s.boss, ...b, hp: b.maxHp, cap: Math.ceil(b.maxHp / Math.max(1, s.players.length)), contributions: {}, defeated: false, failed: false }, missions: s.missions.map((m) => ({ ...m, completedBy: [] })) })); notify("Chefão convocado. Missões liberadas — boa caçada."); }} />}
-          </div>
-        )}
-
-        {view === "provas" && (
-          <div style={{ marginTop: 16, display: "grid", gap: 14 }}>
-            <h2 style={{ margin: 0, fontSize: 20 }}>Provas</h2>
-            <div style={cardStyle}>
-              <div style={{ fontSize: 13, color: C.dim, marginBottom: 12 }}>
-                Regra de conversão: <b style={{ color: C.text }}>1 ponto = {state.config.xpPerPoint} XP</b> (ajustável em Configurações). Prova vale 100 pontos → máx. {fmt(100 * state.config.xpPerPoint)} XP. Monte a prova com pesos por dificuldade (fácil 5 / médio 10 / difícil 15) — aqui você só lança a nota final.
-              </div>
-              {gestor ? <ProvaForm players={state.players} cfg={state.config} onApply={applyProva} /> : <div style={{ color: C.orange, fontSize: 13 }}>Apenas o gestor lança notas. Ative o Modo Gestor.</div>}
-            </div>
-            <div style={cardStyle}>
-              <b style={{ fontSize: 13, letterSpacing: 1, color: C.dim }}>HISTÓRICO</b>
-              {state.provas.length === 0 && <div style={{ color: C.dim2, fontSize: 13, marginTop: 8 }}>Nenhuma prova lançada ainda.</div>}
-              {state.provas.map((pr) => {
-                const p = state.players.find((x) => x.id === pr.pid);
-                return (
-                  <div key={pr.id} style={{ display: "flex", gap: 10, alignItems: "center", padding: "9px 0", borderBottom: `1px solid ${C.border}55`, fontSize: 13 }}>
-                    <Avatar p={p} size={28} />
-                    <span style={{ flex: 1 }}><b>{p.name.split(" ")[0]}</b> — {pr.nome}</span>
-                    <span>Nota <b>{pr.nota}</b></span>
-                    <b style={{ color: C.green }}>+{fmt(pr.xp)} XP</b>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        )}
-
-        {view === "ideias" && (
-          <div style={{ marginTop: 16, display: "grid", gap: 14 }}>
-            <h2 style={{ margin: 0, fontSize: 20 }}>Banco de Ideias</h2>
-            <p style={{ color: C.dim, fontSize: 13, margin: 0 }}>Ideia bem detalhada que gera economia ou melhoria vira XP. O gestor avalia o impacto — o autor vê só a recompensa, nunca o grau.</p>
-            <IdeaForm onSubmit={submitIdea} />
-            <div style={cardStyle}>
-              <b style={{ fontSize: 13, letterSpacing: 1, color: C.dim }}>IDEIAS ENVIADAS</b>
-              {state.ideas.length === 0 && <div style={{ color: C.dim2, fontSize: 13, marginTop: 8 }}>Nenhuma ideia ainda. Quem pensa, farma.</div>}
-              {state.ideas.map((i) => {
-                const p = state.players.find((x) => x.id === i.pid);
-                return (
-                  <div key={i.id} style={{ padding: "12px 0", borderBottom: `1px solid ${C.border}55` }}>
-                    <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-                      <Avatar p={p} size={28} />
-                      <b style={{ fontSize: 13.5, flex: 1 }}>{i.title}</b>
-                      {i.status === "avaliada" ? <Chip color={C.green}>Recompensada +{fmt(i.xp)} XP</Chip> : <Chip color={C.orange}>Em análise</Chip>}
-                    </div>
-                    <div style={{ fontSize: 12.5, color: C.dim, margin: "6px 0 0 38px" }}>{i.desc}</div>
-                    {gestor && i.status === "pendente" && (
-                      <div style={{ display: "flex", gap: 8, margin: "8px 0 0 38px" }}>
-                        {["baixo", "medio", "alto"].map((g) => (
-                          <button key={g} onClick={() => evalIdea(i, g)} style={{ ...btnStyle(g === "alto" ? C.gold : g === "medio" ? C.violetHot : C.dim, true), padding: "5px 12px", fontSize: 11 }}>
-                            Impacto {g} · +{state.config.ideaXp[g]} XP
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        )}
-
-        {view === "ranking" && (
-          <div style={{ marginTop: 16, display: "grid", gap: 14 }}>
-            <h2 style={{ margin: 0, fontSize: 20 }}>Ranking do Mês — XP farmado</h2>
-            {ranked.map((p, i) => (
-              <div key={p.id} style={{ ...cardStyle, display: "flex", alignItems: "center", gap: 14, border: i === 0 ? `1.5px solid ${C.gold}` : cardStyle.border && `1px solid ${C.border}` }}>
-                <div style={{ fontSize: 22, width: 34, textAlign: "center" }}>{["🥇", "🥈", "🥉"][i] || `${i + 1}º`}</div>
-                <Avatar p={p} size={40} />
-                <div style={{ flex: 1 }}>
-                  <b>{p.name}</b>
-                  <div style={{ fontSize: 12, color: C.dim }}>Nível {p.level} · {titleFor(p.level)}</div>
-                </div>
-                <b style={{ color: C.violetHot }}>{fmt(p.totalMonth)} XP</b>
-              </div>
-            ))}
-            <div style={{ ...cardStyle, border: `1px solid ${C.gold}66` }}>
-              <b style={{ color: C.gold, fontSize: 13, letterSpacing: 1 }}>🏆 PRÊMIOS DO 1º LUGAR DO MÊS</b>
-              <div style={{ fontSize: 13, color: C.dim, marginTop: 8, lineHeight: 1.8 }}>
-                Pin exclusivo · PIX · Reconhecimento por escrito · Almoço com a diretoria · Fim de semana em Airbnb com tudo pago · Crachá simbólico ("Arauto da Organização", "Máquina de Produção")
-              </div>
-            </div>
-            <div style={cardStyle}>
-              <b style={{ fontSize: 13, letterSpacing: 1, color: C.dim }}>OS 3 PILARES</b>
-              <div style={{ fontSize: 13, color: C.dim, marginTop: 8, lineHeight: 1.9 }}>
-                <b style={{ color: C.blue }}>Evolução pessoal</b> — você contra você mesmo: nível nunca se perde (LEI 3).<br />
-                <b style={{ color: C.violetHot }}>Colaboração</b> — a equipe vence junta no Chefão.<br />
-                <b style={{ color: C.gold }}>Excelência</b> — quem se destaca leva reconhecimento extra.
-              </div>
-            </div>
-          </div>
-        )}
-
-        {view === "conquistas" && (
-          <div style={{ marginTop: 16 }}>
-            <h2 style={{ margin: "0 0 14px", fontSize: 20 }}>Feed de Conquistas</h2>
-            <div style={cardStyle}>
-              {state.feed.map((f) => {
-                const p = state.players.find((x) => x.id === f.who);
-                return (
-                  <div key={f.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 0", borderBottom: `1px solid ${C.border}55`, fontSize: 13 }}>
-                    <Avatar p={p} size={30} />
-                    <span style={{ flex: 1 }}><b style={{ color: C.blue }}>{p.name.split(" ")[0]}</b> {f.text}</span>
-                    {f.xp !== 0 && <b style={{ color: f.xp > 0 ? C.green : C.red }}>{f.xp > 0 ? "+" : ""}{fmt(f.xp)} XP</b>}
-                    <span style={{ color: C.dim2, fontSize: 11 }}>{ago(f.t)}</span>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        )}
-
-        {view === "loja" && (
-          <div style={{ marginTop: 16 }}>
-            <h2 style={{ margin: "0 0 4px", fontSize: 20 }}>Loja de Skins</h2>
-            <p style={{ color: C.dim, fontSize: 13 }}>LEI 2: toda recompensa custa esforço. Skins são compradas com FlixCoins farmadas.</p>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(190px, 1fr))", gap: 14 }}>
-              {SKINS.map((sk) => {
-                const owned = me.ownedSkins.includes(sk.id);
-                const locked = sk.lockedLevel && me.level < sk.lockedLevel;
-                return (
-                  <div key={sk.id} style={{ ...cardStyle, textAlign: "center", border: me.skin === sk.id ? `1.5px solid ${C.violetHot}` : `1px solid ${C.border}` }}>
-                    <div style={{ height: 150, display: "flex", alignItems: "center", justifyContent: "center", filter: locked ? "brightness(.22)" : "none" }}>
-                      <HeroFigure p={{ ...me, skin: sk.id }} height={145} />
-                    </div>
-                    <b style={{ fontSize: 13.5 }}>{locked ? "Skin Secreta" : sk.name}</b>
-                    <div style={{ marginTop: 8 }}>
-                      {locked ? <div style={{ fontSize: 12, color: C.dim }}>🔒 Disponível no nível {sk.lockedLevel}</div>
-                        : me.skin === sk.id ? <Chip color={C.green}>Equipada</Chip>
-                        : owned ? <button onClick={() => setState((s) => ({ ...s, players: s.players.map((p) => (p.id === activeId ? { ...p, skin: sk.id } : p)) }))} style={btnStyle(C.violetHot, true)}>Equipar</button>
-                        : <button onClick={() => buy(sk, "skin")} style={{ ...btnStyle(C.gold), display: "inline-flex", gap: 7, alignItems: "center" }}><Coin size={14} /> {fmt(sk.price)}</button>}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        )}
-
-        {view === "mercado" && (
-          <div style={{ marginTop: 16 }}>
-            <h2 style={{ margin: "0 0 4px", fontSize: 20 }}>Mercado FlixCoin</h2>
-            <p style={{ color: C.dim, fontSize: 13 }}>Recompensas reais. O resgate fica pendente para o gestor providenciar.</p>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: 14 }}>
-              {MARKET.map((it) => (
-                <div key={it.id} style={{ ...cardStyle, textAlign: "center" }}>
-                  <div style={{ fontSize: 40 }}>{it.icon}</div>
-                  <b style={{ fontSize: 13.5, display: "block", margin: "8px 0" }}>{it.name}</b>
-                  <button onClick={() => buy(it, "market")} style={{ ...btnStyle(C.gold), display: "inline-flex", gap: 7, alignItems: "center" }}><Coin size={14} /> {fmt(it.price)}</button>
-                </div>
-              ))}
-            </div>
-            {state.redeems.length > 0 && (
-              <div style={{ ...cardStyle, marginTop: 16 }}>
-                <b style={{ fontSize: 13, letterSpacing: 1, color: C.dim }}>RESGATES {gestor ? "(providenciar)" : ""}</b>
-                {state.redeems.map((r) => {
-                  const p = state.players.find((x) => x.id === r.pid);
+            ) : (
+              <div style={{ ...cardStyle, textAlign: "center", color: C.dim }}>Nenhum chefão em campo. {gestor ? "Convoque o próximo abaixo." : "Aguardem a convocação do gestor."}</div>
+            )}
+            {chefao && (
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", gap: 12, marginTop: 14 }}>
+                {colabs.map((p) => {
+                  const c = dano[p.id] || 0;
                   return (
-                    <div key={r.id} style={{ display: "flex", gap: 10, alignItems: "center", padding: "8px 0", borderBottom: `1px solid ${C.border}55`, fontSize: 13 }}>
-                      <Avatar p={p} size={26} />
-                      <span style={{ flex: 1 }}><b>{p.name.split(" ")[0]}</b> resgatou {r.item}</span>
-                      {r.status === "pendente" ? (gestor
-                        ? <button onClick={() => setState((s) => ({ ...s, redeems: s.redeems.map((x) => (x.id === r.id ? { ...x, status: "entregue" } : x)) }))} style={{ ...btnStyle(C.green, true), padding: "5px 12px", fontSize: 11 }}>Marcar entregue</button>
-                        : <Chip color={C.orange}>Pendente</Chip>)
-                        : <Chip color={C.green}>Entregue</Chip>}
+                    <div key={p.id} style={cardStyle}>
+                      <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 8 }}>
+                        <Avatar p={p} size={36} />
+                        <div><b style={{ fontSize: 13 }}>{p.nick || p.name.split(" ")[0]}</b><div style={{ fontSize: 11, color: c >= cap ? C.green : C.dim }}>{c >= cap ? "Meta batida! ⚔️" : "Em combate"}</div></div>
+                      </div>
+                      <Bar value={c} max={cap} color={c >= cap ? C.green : C.violetHot} />
+                      <div style={{ fontSize: 11.5, color: C.dim, marginTop: 4, textAlign: "right" }}>{fmt(c)} / {fmt(cap)} XP de dano</div>
                     </div>
                   );
                 })}
               </div>
             )}
+            {gestor && !chefao && <BossForm onSummon={(b) => agir(convocarChefao(b), "Chefão convocado. Vincule as missões ☠ a ele.")} />}
           </div>
         )}
 
+        {/* ============ RANKING ============ */}
+        {view === "ranking" && (
+          <div style={{ marginTop: 16, display: "grid", gap: 14 }}>
+            <h2 style={{ margin: 0, fontSize: 20 }}>Ranking do Mês — XP farmado</h2>
+            {ranked.map((p, i) => (
+              <div key={p.id} style={{ ...cardStyle, display: "flex", alignItems: "center", gap: 14, border: i === 0 ? `1.5px solid ${C.gold}` : `1px solid ${C.border}` }}>
+                <div style={{ fontSize: 22, width: 34, textAlign: "center" }}>{["🥇", "🥈", "🥉"][i] || `${i + 1}º`}</div>
+                <Avatar p={p} size={40} />
+                <div style={{ flex: 1 }}>
+                  <b>{p.nick || p.name}</b>
+                  <div style={{ fontSize: 12, color: C.dim }}>Nível {nivelDe(saldo[p.id].xp).level} · {titleFor(nivelDe(saldo[p.id].xp).level)}</div>
+                </div>
+                <b style={{ color: C.violetHot }}>{fmt(saldo[p.id].mes)} XP</b>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* ============ EXTRATO (histórico por data) ============ */}
+        {view === "extrato" && (() => {
+          const alvo = (gestor && extratoDe) || me.id;
+          const eventosAlvo = dados.eventos.filter((ev) => ev.colaborador_id === alvo);
+          const porDia = {};
+          eventosAlvo.forEach((ev) => { const d = dataBr(ev.criado_em); (porDia[d] = porDia[d] || []).push(ev); });
+          return (
+            <div style={{ marginTop: 16, display: "grid", gap: 14, maxWidth: 760 }}>
+              <h2 style={{ margin: 0, fontSize: 20 }}>Extrato — o livro-razão</h2>
+              {gestor && (
+                <select value={alvo} onChange={(e) => setExtratoDe(e.target.value)} style={{ ...inputStyle, maxWidth: 320 }}>
+                  {colabs.map((c) => <option key={c.id} value={c.id}>{c.nome}</option>)}
+                </select>
+              )}
+              {Object.keys(porDia).length === 0 && <div style={{ ...cardStyle, color: C.dim2, fontSize: 13 }}>Nenhum evento ainda. Todo XP e moeda ganho ou perdido aparecerá aqui, dia a dia.</div>}
+              {Object.entries(porDia).map(([dia, evs]) => (
+                <div key={dia} style={cardStyle}>
+                  <b style={{ fontSize: 13, letterSpacing: 1, color: C.violetHot }}>{dia}</b>
+                  {evs.map((ev) => (
+                    <div key={ev.id} style={{ display: "flex", gap: 10, padding: "8px 0", borderBottom: `1px solid ${C.border}55`, fontSize: 13, alignItems: "center" }}>
+                      <Chip color={ev.xp < 0 || ev.moedas < 0 ? C.red : C.blue}>{ev.origem}</Chip>
+                      <span style={{ flex: 1 }}>{ev.descricao || "—"}</span>
+                      {ev.xp !== 0 && <b style={{ color: ev.xp > 0 ? C.green : C.red }}>{ev.xp > 0 ? "+" : ""}{fmt(ev.xp)} XP</b>}
+                      {ev.moedas !== 0 && <b style={{ color: ev.moedas > 0 ? C.gold : C.red }}>{ev.moedas > 0 ? "+" : ""}{fmt(ev.moedas)} 🪙</b>}
+                    </div>
+                  ))}
+                </div>
+              ))}
+            </div>
+          );
+        })()}
+
+        {/* ============ EQUIPE (gestor) ============ */}
+        {view === "equipe" && gestor && (
+          <div style={{ marginTop: 16, display: "grid", gap: 14 }}>
+            <h2 style={{ margin: 0, fontSize: 20 }}>Equipe</h2>
+            <div style={{ ...cardStyle, fontSize: 13, color: C.dim }}>
+              Para ADICIONAR alguém: Supabase → Authentication → Add user (e-mail + senha). A ficha nasce sozinha aqui. Depois ajuste função e turno abaixo.
+            </div>
+            {colabs.map((p) => (
+              <FichaColab key={p.id} p={p} saldo={saldo[p.id]}
+                onSalvar={(campos) => agir(salvarPerfil(p.id, campos), "Ficha atualizada.")}
+                onAjuste={(xp, moedas, desc) => agir(lancarAjuste(p.id, xp, moedas, desc), "Ajuste lançado no extrato.")} />
+            ))}
+          </div>
+        )}
+
+        {/* ============ MANUAL ============ */}
         {view === "manual" && (
           <div style={{ marginTop: 16, display: "grid", gap: 12, maxWidth: 780 }}>
             <h2 style={{ margin: 0, fontSize: 20 }}>📖 Manual do Jogo</h2>
             {[
-              ["O que é a Operação Ascensão", `Plataforma de gamificação do estoque. Trabalho de verdade gera XP, XP sobe seu nível e ${state.config.coinName} compram recompensas reais. LEI 1: tudo gera XP. LEI 2: nada é de graça. LEI 3: nível conquistado é seu para sempre. LEI 4: todo mês existe algo novo.`],
-              ["Dashboard", "Sua central: personagem, atributos, nível, sequência e a Roleta. Clique no ✏️ ao lado do seu nome para escolher seu nome de jogo — o nome real continua visível embaixo."],
-              ["🎰 Roleta da Pontualidade", "Abre todo dia no horário do seu turno e fica ativa por 5 minutos (turno 09:00 → roleta de 09:00 a 09:05), somente no terminal oficial do estoque. Girou na janela: prêmio + sequência mantida. Perdeu a janela: sequência zerada e punição de XP."],
-              ["Missões", `Fixas e Diárias renovam à meia-noite; Esporádicas são únicas. Missões ☠ causam dano no Chefão. O XP é visível, mas as ${state.config.coinName} são SURPRESA — algumas missões pagam, outras não. Diária não concluída: perde o XP previsto e 5 ${state.config.coinName}. Compromisso com todas, não só com as fáceis.`],
-              ["☠ Chefão", "Vilão da semana ou do mês com um foco definido pelo gestor (ex: organização, qualidade dos testes). Cada colaborador tem uma cota de dano. Todos batem a cota antes do prazo → o chefão cai e o prêmio secreto é revelado. Um falhar → ele vence, e a derrota aparece na tela."],
-              ["Banco de Ideias", "Ideia bem detalhada que economiza dinheiro ou melhora processo vira XP após avaliação do gestor. Ideia rasa não farma."],
-              ["Provas", "Avaliações valem até 100 pontos; cada ponto vira XP na conversão definida pelo gestor."],
-              ["Loja & Mercado", `Skins e pets são cosméticos — identidade do seu personagem. O Mercado troca ${state.config.coinName} por recompensas REAIS (camisa, curso, PIX, Airbnb…). Resgates ficam pendentes até o gestor entregar.`],
-              ["Ranking & Conquistas", "Ranking do mês por XP farmado — o 1º lugar leva prêmios de verdade. O feed registra tudo: transparência total, inclusive ajustes do gestor."],
+              ["As 4 Leis", "LEI 1: tudo gera XP. LEI 2: nada é de graça. LEI 3: nível conquistado é seu para sempre. LEI 4: todo mês existe algo novo."],
+              ["Como funciona agora", "Cada um entra com a PRÓPRIA conta (e-mail e senha). Tudo que você faz vale para a equipe inteira, em qualquer aparelho — o jogo agora vive num banco de dados central."],
+              ["Missões", "Marcou 'Concluí'? Vai para a fila do gestor. Ele confere o serviço de verdade. Aprovou: XP + moedas surpresa caem no seu extrato. Reprovou: nada acontece e você pode refazer direito. Não existe atalho."],
+              ["☠ Chefão", "Vilão com foco definido pelo gestor. Só missões ☠ APROVADAS causam dano. Cada um tem uma cota; todos batem antes do prazo → prêmio secreto revelado. Um falhar → derrota da equipe."],
+              ["Extrato", "Seu livro-razão: cada XP e moeda, ganho ou perdido, registrado com data e motivo. Transparência total — inclusive ajustes do gestor ficam visíveis."],
+              ["Ranking", "XP farmado no mês corrente. O 1º lugar leva prêmios reais definidos pelo gestor."],
             ].map(([t, d]) => (
               <div key={t} style={cardStyle}>
                 <b style={{ fontSize: 14 }}>{t}</b>
@@ -786,109 +464,20 @@ export default function App() {
             ))}
           </div>
         )}
-
-        {view === "config" && (
-          <div style={{ marginTop: 16, display: "grid", gap: 14, maxWidth: 640 }}>
-            <h2 style={{ margin: 0, fontSize: 20 }}>Configurações {gestor ? "" : "(somente leitura — ative o Modo Gestor)"}</h2>
-            <div style={cardStyle}>
-              <b style={{ fontSize: 13, letterSpacing: 1, color: C.dim }}>REGRAS DE XP</b>
-              <div style={{ display: "grid", gap: 10, marginTop: 12 }}>
-                <label style={{ fontSize: 13 }}>XP por ponto de prova
-                  <input type="number" disabled={!gestor} value={state.config.xpPerPoint} onChange={(e) => setState((s) => ({ ...s, config: { ...s.config, xpPerPoint: Number(e.target.value) || 0 } }))} style={{ ...inputStyle, marginTop: 5 }} />
-                </label>
-                <label style={{ fontSize: 13 }}>XP do check-in no horário
-                  <input type="number" disabled={!gestor} value={state.config.checkinXp} onChange={(e) => setState((s) => ({ ...s, config: { ...s.config, checkinXp: Number(e.target.value) || 0 } }))} style={{ ...inputStyle, marginTop: 5 }} />
-                </label>
-                <label style={{ fontSize: 13, display: "flex", gap: 10, alignItems: "center" }}>
-                  <input type="checkbox" disabled={!gestor} checked={state.config.latePenalty} onChange={(e) => setState((s) => ({ ...s, config: { ...s.config, latePenalty: e.target.checked } }))} />
-                  Punir atraso com -{state.config.penaltyValue} XP (recomendo desligar: zerar a sequência já dói e preserva o espírito da LEI 3)
-                </label>
-                <label style={{ fontSize: 13 }}>Simular horário atual (HH:MM) — para testar o check-in
-                  <input placeholder="ex: 08:55 (vazio = relógio real)" disabled={!gestor} value={state.config.simTime} onChange={(e) => setState((s) => ({ ...s, config: { ...s.config, simTime: e.target.value } }))} style={{ ...inputStyle, marginTop: 5 }} />
-                </label>
-                <label style={{ fontSize: 13 }}>Nome da moeda do jogo
-                  <input disabled={!gestor} value={state.config.coinName} onChange={(e) => setState((s) => ({ ...s, config: { ...s.config, coinName: e.target.value } }))} style={{ ...inputStyle, marginTop: 5 }} />
-                </label>
-                <label style={{ fontSize: 13 }}>Título da temporada (capa do mês)
-                  <input disabled={!gestor} placeholder="ex: Temporada Julho — A Grande Auditoria" value={state.config.seasonTitle || ""} onChange={(e) => setState((s) => ({ ...s, config: { ...s.config, seasonTitle: e.target.value } }))} style={{ ...inputStyle, marginTop: 5 }} />
-                </label>
-                <label style={{ fontSize: 13, display: "flex", gap: 10, alignItems: "center" }}>
-                  <input type="checkbox" disabled={!gestor} checked={terminal} onChange={(e) => { setTerminal(e.target.checked); try { if (e.target.checked) localStorage.setItem("ascensao:terminal", "1"); else localStorage.removeItem("ascensao:terminal"); } catch {} }} />
-                  Este aparelho é o TERMINAL OFICIAL do estoque (a roleta da pontualidade só gira aqui)
-                </label>
-                {gestor && (
-                  <label style={{ fontSize: 13 }}>PIN do Gestor (troque o padrão 2026 antes de liberar pra equipe)
-                    <input value={state.config.gestorPin} onChange={(e) => setState((s) => ({ ...s, config: { ...s.config, gestorPin: e.target.value } }))} style={{ ...inputStyle, marginTop: 5 }} />
-                  </label>
-                )}
-              </div>
-            </div>
-            <div style={cardStyle}>
-              <b style={{ fontSize: 13, letterSpacing: 1, color: C.dim }}>AS 4 LEIS DA ASCENSÃO</b>
-              <div style={{ fontSize: 13, color: C.dim, marginTop: 10, lineHeight: 2 }}>
-                <b style={{ color: C.text }}>LEI 1</b> — Tudo gera XP.<br />
-                <b style={{ color: C.text }}>LEI 2</b> — Toda recompensa custa esforço. Nada de XP de graça.<br />
-                <b style={{ color: C.text }}>LEI 3</b> — O colaborador nunca perde evolução. Nível conquistado é dele para sempre.<br />
-                <b style={{ color: C.text }}>LEI 4</b> — Todo mês existe algo novo: chefões, eventos, temporadas, missões secretas.
-              </div>
-            </div>
-            {gestor && <button onClick={resetAll} style={btnStyle(C.red, true)}>⚠ Resetar todos os dados</button>}
-          </div>
-        )}
       </main>
 
       {/* overlay de batalha */}
-      {battle && (
-        <BattleOverlay battle={battle} boss={state.boss} player={state.players.find((p) => p.id === battle.pid)} onDone={() => setBattle(null)} />
-      )}
-
-      {/* roleta da pontualidade */}
-      {wheel && (
-        <div style={{ position: "fixed", inset: 0, zIndex: 96, background: "rgba(4,6,14,.9)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-          <div style={{ ...cardStyle, width: 340, textAlign: "center" }}>
-            <b style={{ fontSize: 15, letterSpacing: 1 }}>🎰 ROLETA DA PONTUALIDADE</b>
-            <div style={{ display: "flex", justifyContent: "center", margin: "18px 0" }}>
-              <div className={wheel.spinning ? "wheel-spin" : ""} style={{ width: 170, height: 170, borderRadius: "50%", border: `6px solid ${C.gold}`, background: `conic-gradient(${C.violetDeep} 0 60deg, #1c2942 60deg 120deg, ${C.violetDeep} 120deg 180deg, #1c2942 180deg 240deg, ${C.violetDeep} 240deg 300deg, #1c2942 300deg 360deg)`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 42 }}>
-                {wheel.spinning ? "🎲" : "🎉"}
-              </div>
-            </div>
-            {wheel.spinning ? (
-              <div style={{ color: C.dim, fontSize: 13 }}>Girando…</div>
-            ) : (
-              <>
-                <div className="banner-pop" style={{ fontSize: 24, fontWeight: 900, color: C.gold }}>{wheel.prize.label}!</div>
-                <div style={{ color: C.dim, fontSize: 12.5, margin: "6px 0 12px" }}>Pontualidade paga. Sequência: {me.streak} dias 🔥</div>
-                <button onClick={() => setWheel(null)} style={btnStyle(C.violetHot)}>Fechar</button>
-              </>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* modal de PIN do gestor */}
-      {pinModal && (
-        <div style={{ position: "fixed", inset: 0, zIndex: 95, background: "rgba(4,6,14,.85)", display: "flex", alignItems: "center", justifyContent: "center" }} onClick={() => setPinModal(false)}>
-          <div style={{ ...cardStyle, width: 320, textAlign: "center" }} onClick={(e) => e.stopPropagation()}>
-            <div style={{ fontSize: 28, marginBottom: 6 }}>🔒</div>
-            <b style={{ fontSize: 15 }}>PIN do Gestor</b>
-            <p style={{ color: C.dim, fontSize: 12.5, margin: "6px 0 12px" }}>Somente o gestor lança provas, avalia ideias e cria missões.</p>
-            <input
-              type="password" autoFocus value={pinInput} placeholder="••••"
-              onChange={(e) => setPinInput(e.target.value)}
-              onKeyDown={(e) => { if (e.key === "Enter") { if (pinInput === state.config.gestorPin) { setGestor(true); setPinModal(false); notify("Modo Gestor ativado.", C.gold); } else notify("PIN incorreto.", C.red); } }}
-              style={{ ...inputStyle, textAlign: "center", fontSize: 18, letterSpacing: 6 }}
-            />
-            <div style={{ display: "flex", gap: 10, justifyContent: "center", marginTop: 14 }}>
-              <button onClick={() => setPinModal(false)} style={btnStyle(C.dim, true)}>Cancelar</button>
-              <button onClick={() => { if (pinInput === state.config.gestorPin) { setGestor(true); setPinModal(false); notify("Modo Gestor ativado.", C.gold); } else notify("PIN incorreto.", C.red); }} style={btnStyle(C.violetHot)}>Entrar</button>
-            </div>
-          </div>
-        </div>
-      )}
+      {battle && (() => {
+        const jogador = colabs.find((c) => c.id === battle.pid);
+        if (!jogador) return null;
+        return <BattleOverlay battle={battle}
+          boss={{ kind: "Chefão", name: chefao?.nome || "Chefão", reward: chefao?.premio_oculto || "", extra: chefao?.extra || "" }}
+          player={jogador} onDone={() => setBattle(null)} />;
+      })()}
 
       {/* toast */}
       {toast && (
-        <div style={{ position: "fixed", bottom: 22, right: 22, zIndex: 99, background: C.panel, border: `1.5px solid ${toast.color}`, color: C.text, padding: "12px 18px", borderRadius: 12, fontSize: 13.5, fontWeight: 600, boxShadow: `0 0 24px ${toast.color}44`, maxWidth: 340 }}>
+        <div style={{ position: "fixed", bottom: 22, right: 22, zIndex: 99, background: C.panel, border: `1.5px solid ${toast.cor}`, color: C.text, padding: "12px 18px", borderRadius: 12, fontSize: 13.5, fontWeight: 600, boxShadow: `0 0 24px ${toast.cor}44`, maxWidth: 340 }}>
           {toast.msg}
         </div>
       )}
@@ -896,78 +485,74 @@ export default function App() {
   );
 }
 
+/* ---------- telas simples ---------- */
+function Tela({ msg, extra }) {
+  return (
+    <div style={{ minHeight: "100vh", background: C.bg, color: C.dim, display: "flex", flexDirection: "column", gap: 16, alignItems: "center", justifyContent: "center", fontFamily: "system-ui", padding: 20, textAlign: "center" }}>
+      <div>{msg}</div>{extra}
+    </div>
+  );
+}
 
+/* ---------- formulário: nova missão (gestor) ---------- */
+function NovaMissao({ chefao, onCriar }) {
+  const [nome, setNome] = useState("");
+  const [xp, setXp] = useState("200");
+  const [moedas, setMoedas] = useState("");
+  const [tipo, setTipo] = useState("fixa");
+  const [vinculada, setVinculada] = useState(true);
+  return (
+    <div style={{ ...cardStyle, border: `1px dashed ${C.border2}` }}>
+      <b style={{ fontSize: 13, letterSpacing: 1, color: C.dim }}>GESTOR — NOVA MISSÃO</b>
+      <div style={{ display: "grid", gridTemplateColumns: "2fr 80px 110px 1fr auto auto", gap: 10, marginTop: 10, alignItems: "center" }}>
+        <input placeholder="Nome da missão" value={nome} onChange={(e) => setNome(e.target.value)} style={inputStyle} />
+        <input placeholder="XP" value={xp} onChange={(e) => setXp(e.target.value.replace(/\D/g, ""))} style={inputStyle} />
+        <input placeholder="Moedas 🤫" title="Oculto para a equipe" value={moedas} onChange={(e) => setMoedas(e.target.value.replace(/\D/g, ""))} style={inputStyle} />
+        <select value={tipo} onChange={(e) => setTipo(e.target.value)} style={inputStyle}>
+          <option value="fixa">Fixa</option>
+          <option value="diaria">Diária</option>
+          <option value="esporadica">Esporádica</option>
+        </select>
+        <label style={{ fontSize: 12.5, color: C.dim, display: "flex", gap: 6, alignItems: "center" }}>
+          <input type="checkbox" checked={vinculada} disabled={!chefao} onChange={(e) => setVinculada(e.target.checked)} /> ☠ Chefão
+        </label>
+        <button disabled={!nome || !xp} onClick={() => {
+          onCriar({ nome, xp: Number(xp), moedas_ocultas: Number(moedas) || 0, tipo, chefao_id: vinculada && chefao ? chefao.id : null });
+          setNome(""); setMoedas("");
+        }} style={{ ...btnStyle(C.violetHot), opacity: nome && xp ? 1 : 0.4 }}>Criar</button>
+      </div>
+      {!chefao && <div style={{ fontSize: 11.5, color: C.dim2, marginTop: 8 }}>Sem chefão ativo — convoque um na aba Chefão para vincular missões ☠.</div>}
+    </div>
+  );
+}
 
-/* ---------- Administração de colaboradores (gestor) ---------- */
-function PlayerAdmin({ p, gestor, onReset, onDelete, onCoins, onXp }) {
-  const [coins, setCoins] = useState("");
+/* ---------- ficha administrativa de colaborador (gestor) ---------- */
+function FichaColab({ p, saldo, onSalvar, onAjuste }) {
+  const [funcao, setFuncao] = useState(p.funcao || "");
+  const [turno, setTurno] = useState(String(p.turno).slice(0, 5));
   const [xp, setXp] = useState("");
+  const [moedas, setMoedas] = useState("");
+  const [desc, setDesc] = useState("");
   const num = (v) => parseInt(v, 10) || 0;
+  const info = nivelDe(saldo.xp);
   return (
     <div style={cardStyle}>
       <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-        <Avatar p={p} size={40} />
-        <div style={{ flex: 1, minWidth: 160 }}>
-          <b>{p.name}</b>
-          <div style={{ fontSize: 12, color: C.dim }}>{p.role} · Nível {p.level} · {fmt(p.coins)} FlixCoins · turno {p.schedule}</div>
+        <Avatar p={p} size={40} ring={p.is_gestor ? C.gold : undefined} />
+        <div style={{ flex: 1, minWidth: 170 }}>
+          <b>{p.nome}</b> {p.is_gestor && <Chip color={C.gold}>Gestor</Chip>}
+          <div style={{ fontSize: 12, color: C.dim }}>Nível {info.level} · {fmt(saldo.xp)} XP total · {fmt(saldo.moedas)} moedas</div>
         </div>
-        {gestor && (
-          <>
-            <button onClick={onReset} style={{ ...btnStyle(C.orange, true), padding: "6px 12px", fontSize: 11 }}>↺ Resetar</button>
-            <button onClick={() => { if (window.confirm(`Excluir ${p.name}? Todo o histórico dele some.`)) onDelete(); }} style={{ ...btnStyle(C.red, true), padding: "6px 12px", fontSize: 11 }}>🗑 Excluir</button>
-          </>
-        )}
+        <input value={funcao} onChange={(e) => setFuncao(e.target.value)} placeholder="Função" style={{ ...inputStyle, width: 170 }} />
+        <input value={turno} onChange={(e) => setTurno(e.target.value)} placeholder="Turno HH:MM" style={{ ...inputStyle, width: 110 }} />
+        <button onClick={() => onSalvar({ funcao, turno })} style={{ ...btnStyle(C.violetHot, true), padding: "8px 14px", fontSize: 12 }}>Salvar ficha</button>
       </div>
-      {gestor && (
-        <div style={{ display: "flex", gap: 10, marginTop: 12, flexWrap: "wrap", alignItems: "center" }}>
-          <input placeholder="± FlixCoins (ex: 500 ou -200)" value={coins} onChange={(e) => setCoins(e.target.value.replace(/[^0-9-]/g, ""))} style={{ ...inputStyle, width: 200 }} />
-          <button disabled={!num(coins)} onClick={() => { onCoins(num(coins)); setCoins(""); }} style={{ ...btnStyle(C.gold, true), opacity: num(coins) ? 1 : 0.4, padding: "8px 14px", fontSize: 12 }}>Aplicar moedas</button>
-          <input placeholder="± XP (ex: 300 ou -100)" value={xp} onChange={(e) => setXp(e.target.value.replace(/[^0-9-]/g, ""))} style={{ ...inputStyle, width: 170 }} />
-          <button disabled={!num(xp)} onClick={() => { onXp(num(xp)); setXp(""); }} style={{ ...btnStyle(C.violetHot, true), opacity: num(xp) ? 1 : 0.4, padding: "8px 14px", fontSize: 12 }}>Aplicar XP</button>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function AddPlayerForm({ onAdd }) {
-  const [name, setName] = useState("");
-  const [role, setRole] = useState("");
-  const [sched, setSched] = useState("09:00");
-  return (
-    <div style={{ ...cardStyle, border: `1px dashed ${C.border2}` }}>
-      <b style={{ fontSize: 13, letterSpacing: 1, color: C.dim }}>GESTOR — NOVO COLABORADOR</b>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 110px auto", gap: 10, marginTop: 10 }}>
-        <input placeholder="Nome completo" value={name} onChange={(e) => setName(e.target.value)} style={inputStyle} />
-        <input placeholder="Função (ex: Conferente)" value={role} onChange={(e) => setRole(e.target.value)} style={inputStyle} />
-        <input placeholder="Turno" value={sched} onChange={(e) => setSched(e.target.value)} style={inputStyle} />
-        <button disabled={!name} onClick={() => { onAdd(name, role, sched); setName(""); setRole(""); }} style={{ ...btnStyle(C.violetHot), opacity: name ? 1 : 0.4 }}>Adicionar</button>
-      </div>
-      <div style={{ fontSize: 11.5, color: C.dim2, marginTop: 8 }}>Turno no formato HH:MM — define a janela do check-in diário (−10min a +5min). Todo colaborador nasce no nível 1 com 0 XP e 0 moedas (LEI 2).</div>
-    </div>
-  );
-}
-
-/* ---------- Primeira execução: montar a equipe ---------- */
-function SetupScreen({ onCreate }) {
-  const [pin, setPin] = useState("");
-  const [name, setName] = useState("");
-  const [role, setRole] = useState("");
-  const [sched, setSched] = useState("09:00");
-  return (
-    <div style={{ ...cardStyle, width: "min(460px, 92vw)", textAlign: "center" }}>
-      <div style={{ fontSize: 36 }}>🏔️</div>
-      <h2 style={{ margin: "6px 0 4px" }}>Operação Ascensão</h2>
-      <p style={{ color: C.dim, fontSize: 13, marginTop: 0 }}>
-        O jogo começa do zero. Gestor: digite o PIN e crie o primeiro colaborador.
-        Os demais você adiciona na aba <b style={{ color: C.text }}>Colaboradores</b>.
-      </p>
-      <div style={{ display: "grid", gap: 10, textAlign: "left" }}>
-        <input type="password" placeholder="PIN do Gestor" value={pin} onChange={(e) => setPin(e.target.value)} style={inputStyle} />
-        <input placeholder="Nome do colaborador" value={name} onChange={(e) => setName(e.target.value)} style={inputStyle} />
-        <input placeholder="Função (ex: Operador de Estoque)" value={role} onChange={(e) => setRole(e.target.value)} style={inputStyle} />
-        <input placeholder="Turno (HH:MM)" value={sched} onChange={(e) => setSched(e.target.value)} style={inputStyle} />
-        <button disabled={!pin || !name} onClick={() => onCreate(pin, name, role, sched)} style={{ ...btnStyle(C.violetHot), opacity: pin && name ? 1 : 0.4 }}>Criar e começar</button>
+      <div style={{ display: "flex", gap: 10, marginTop: 12, flexWrap: "wrap", alignItems: "center" }}>
+        <input placeholder="± XP" value={xp} onChange={(e) => setXp(e.target.value.replace(/[^0-9-]/g, ""))} style={{ ...inputStyle, width: 100 }} />
+        <input placeholder="± Moedas" value={moedas} onChange={(e) => setMoedas(e.target.value.replace(/[^0-9-]/g, ""))} style={{ ...inputStyle, width: 110 }} />
+        <input placeholder="Motivo do ajuste (aparece no extrato)" value={desc} onChange={(e) => setDesc(e.target.value)} style={{ ...inputStyle, flex: 1, minWidth: 200 }} />
+        <button disabled={(!num(xp) && !num(moedas)) || !desc} onClick={() => { onAjuste(num(xp), num(moedas), desc); setXp(""); setMoedas(""); setDesc(""); }}
+          style={{ ...btnStyle(C.gold, true), opacity: (num(xp) || num(moedas)) && desc ? 1 : 0.4, padding: "8px 14px", fontSize: 12 }}>Lançar ajuste</button>
       </div>
     </div>
   );
