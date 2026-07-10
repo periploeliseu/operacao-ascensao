@@ -25,16 +25,18 @@ function traduzErro(msg) {
 
 /* ---------- carga geral ---------- */
 export async function carregarTudo() {
-  const [c, m, ch, ev, cl] = await Promise.all([
+  const [c, m, ch, ev, cl, id, rg] = await Promise.all([
     supabase.from("colaboradores").select("*").order("nome"),
     supabase.from("missoes").select("*").eq("ativa", true).order("criado_em"),
     supabase.from("chefoes").select("*").neq("status", "arquivado").order("criado_em", { ascending: false }).limit(1),
     supabase.from("eventos_xp").select("*").order("criado_em", { ascending: false }).limit(3000),
     supabase.from("conclusoes").select("*, missoes(nome, xp, moedas_ocultas, chefao_id)").order("enviada_em", { ascending: false }).limit(500),
+    supabase.from("ideias").select("*").order("criado_em", { ascending: false }).limit(200),
+    supabase.from("resgates").select("*").order("criado_em", { ascending: false }).limit(200),
   ]);
   const erro = c.error || m.error || ch.error || ev.error || cl.error;
   if (erro) throw erro;
-  return { colabs: c.data, missoes: m.data, chefao: ch.data[0] || null, eventos: ev.data, conclusoes: cl.data };
+  return { colabs: c.data, missoes: m.data, chefao: ch.data[0] || null, eventos: ev.data, conclusoes: cl.data, ideias: id.data || [], resgates: rg.data || [] };
 }
 
 /* ---------- colaborador ---------- */
@@ -100,6 +102,65 @@ export async function excluirChefao(id) {
 export async function lancarAjuste(colaboradorId, xp, moedas, descricao) {
   const { error } = await supabase.from("eventos_xp").insert({
     colaborador_id: colaboradorId, origem: "ajuste", xp, moedas, descricao,
+  });
+  return error?.message || null;
+}
+
+/* ---------- conta ---------- */
+export async function trocarSenha(nova) {
+  const { error } = await supabase.auth.updateUser({ password: nova });
+  return error?.message || null;
+}
+
+/* ---------- compras (loja / pets / mercado) ---------- */
+async function debitar(colaboradorId, preco, descricao) {
+  const { error } = await supabase.from("eventos_xp").insert({
+    colaborador_id: colaboradorId, origem: "compra", xp: 0, moedas: -Math.abs(preco), descricao,
+  });
+  return error?.message || null;
+}
+export async function comprarSkin(colab, sk) {
+  const e = await debitar(colab.id, sk.price, `Comprou a skin '${sk.name}'`);
+  if (e) return e;
+  return salvarPerfil(colab.id, { skin: sk.id, skins_possuidas: [...(colab.skins_possuidas || ["elite"]), sk.id] });
+}
+export async function comprarPet(colab, pt) {
+  const e = await debitar(colab.id, pt.price, `Adotou o pet '${pt.name}'`);
+  if (e) return e;
+  return salvarPerfil(colab.id, { pet: pt.id, pets_possuidos: [...(colab.pets_possuidos || []), pt.id] });
+}
+export async function resgatarItem(colab, item) {
+  const e = await debitar(colab.id, item.price, `Resgatou '${item.name}' no mercado`);
+  if (e) return e;
+  const { error } = await supabase.from("resgates").insert({ colaborador_id: colab.id, item: item.name, preco: item.price });
+  return error?.message || null;
+}
+export async function marcarEntregue(id) {
+  const { error } = await supabase.from("resgates").update({ status: "entregue" }).eq("id", id);
+  return error?.message || null;
+}
+
+/* ---------- ideias ---------- */
+export async function enviarIdeia(colaboradorId, titulo, descricao) {
+  const { error } = await supabase.from("ideias").insert({ colaborador_id: colaboradorId, titulo, descricao });
+  return error?.message || null;
+}
+export async function avaliarIdeia(ideia, impacto, xp) {
+  const { error } = await supabase.from("ideias").update({ status: "avaliada", impacto }).eq("id", ideia.id);
+  if (error) return error.message;
+  const { error: e2 } = await supabase.from("eventos_xp").insert({
+    colaborador_id: ideia.colaborador_id, origem: "ideia", xp, moedas: 0,
+    descricao: `Ideia reconhecida: ${ideia.titulo}`, referencia_id: ideia.id,
+  });
+  return e2?.message || null;
+}
+
+/* ---------- provas ---------- */
+export async function lancarProva(colaboradorId, nomeProva, nota, xpPorPonto) {
+  const { error } = await supabase.from("eventos_xp").insert({
+    colaborador_id: colaboradorId, origem: "prova",
+    xp: Math.round(nota * xpPorPonto), moedas: 0,
+    descricao: `Prova '${nomeProva}': nota ${nota}`,
   });
   return error?.message || null;
 }

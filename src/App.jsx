@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from "react";
-import { C, reqFor, BOSS_CAP, SKINS, titleFor, fmt, ago } from "./data/constants.js";
+import { C, reqFor, BOSS_CAP, SKINS, PETS, MARKET, titleFor, fmt, ago } from "./data/constants.js";
 import { Avatar, HeroFigure, BossFigure } from "./components/figures.jsx";
 import { Bar, Chip, Coin, btnStyle, inputStyle, cardStyle } from "./components/ui.jsx";
 import BattleOverlay from "./components/BattleOverlay.jsx";
@@ -9,6 +9,8 @@ import {
   aoMudarSessao, sair, carregarTudo, salvarPerfil,
   criarMissao, desativarMissao, enviarConclusao, avaliarConclusao,
   convocarChefao, mudarStatusChefao, excluirChefao, lancarAjuste,
+  trocarSenha, comprarSkin, comprarPet, resgatarItem, marcarEntregue,
+  enviarIdeia, avaliarIdeia, lancarProva,
 } from "./logic/api.js";
 
 /* ============================================================
@@ -23,7 +25,7 @@ const HAIRS = ["#141420", "#241a12", "#101018", "#2b1a10", "#15161e", "#1c1410",
 function hashId(id) { let h = 0; for (const ch of String(id)) h = (h * 31 + ch.charCodeAt(0)) >>> 0; return h; }
 function decorar(colab) {
   const h = hashId(colab.id);
-  return { ...colab, name: colab.nome, nick: colab.apelido, tone: TONES[h % TONES.length], hair: HAIRS[(h >> 3) % HAIRS.length], skin: colab.skin || "elite" };
+  return { ...colab, name: colab.nome, nick: colab.apelido, tone: TONES[h % TONES.length], hair: HAIRS[(h >> 3) % HAIRS.length], skin: colab.skin || "elite", skins_possuidas: colab.skins_possuidas || ["elite"], pets_possuidos: colab.pets_possuidos || [] };
 }
 
 /* Nível calculado a partir do XP total do ledger */
@@ -45,6 +47,9 @@ export default function App() {
   const [editNick, setEditNick] = useState(false);
   const [nickDraft, setNickDraft] = useState("");
   const [extratoDe, setExtratoDe] = useState(null);
+  const [lojaTab, setLojaTab] = useState("SKINS");
+  const [senhaModal, setSenhaModal] = useState(false);
+  const [novaSenha, setNovaSenha] = useState("");
 
   useEffect(() => { aoMudarSessao(setSessao); }, []);
 
@@ -137,6 +142,10 @@ export default function App() {
     ...(gestor ? [["aprovacoes", "✔", `Aprovações${pendentes.length ? ` (${pendentes.length})` : ""}`]] : []),
     ["chefao", "☠", "Chefão"],
     ["ranking", "♛", "Ranking"],
+    ["loja", "🛍", "Loja"],
+    ["mercado", "🛒", "Mercado"],
+    ["ideias", "💡", "Ideias"],
+    ...(gestor ? [["provas", "✎", "Provas"]] : []),
     ["extrato", "📅", "Extrato"],
     ...(gestor ? [["equipe", "👥", "Equipe"]] : []),
     ["manual", "📖", "Manual"],
@@ -171,6 +180,7 @@ export default function App() {
               <div style={{ fontSize: 11, color: gestor ? C.gold : C.dim }}>{gestor ? "Gestor" : me.funcao}</div>
             </div>
           </div>
+          <button onClick={() => { setNovaSenha(""); setSenhaModal(true); }} style={{ ...btnStyle(C.violetHot, true), width: "100%", marginBottom: 8 }}>🔑 Trocar senha</button>
           <button onClick={() => sair()} style={{ ...btnStyle(C.dim, true), width: "100%" }}>Sair da conta</button>
         </div>
       </aside>
@@ -445,6 +455,149 @@ export default function App() {
           </div>
         )}
 
+        {/* ============ LOJA (skins e pets) ============ */}
+        {view === "loja" && (
+          <div style={{ marginTop: 16 }}>
+            <h2 style={{ margin: "0 0 4px", fontSize: 20 }}>Loja</h2>
+            <p style={{ color: C.dim, fontSize: 13 }}>LEI 2: toda recompensa custa esforço. Seu saldo: <b style={{ color: C.gold }}>{fmt(saldo[me.id].moedas)} moedas</b>.</p>
+            <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
+              {["SKINS", "PETS"].map((t) => (
+                <button key={t} onClick={() => setLojaTab(t)} style={{ ...btnStyle(C.violetHot, lojaTab !== t), padding: "7px 16px", fontSize: 12 }}>{t}</button>
+              ))}
+            </div>
+            {lojaTab === "SKINS" ? (
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: 14 }}>
+                {SKINS.map((sk) => {
+                  const possui = me.skins_possuidas.includes(sk.id);
+                  const equipada = me.skin === sk.id;
+                  const bloqueada = sk.lockedLevel && nivel.level < sk.lockedLevel;
+                  return (
+                    <div key={sk.id} style={{ ...cardStyle, textAlign: "center", border: equipada ? `1.5px solid ${C.violetHot}` : `1px solid ${C.border}` }}>
+                      <div style={{ height: 140, display: "flex", alignItems: "center", justifyContent: "center", filter: bloqueada ? "brightness(.22)" : "none" }}>
+                        <HeroFigure p={{ ...me, skin: sk.id }} height={135} />
+                      </div>
+                      <b style={{ fontSize: 13.5 }}>{bloqueada ? "Skin Secreta" : sk.name}</b>
+                      <div style={{ marginTop: 8 }}>
+                        {bloqueada ? <div style={{ fontSize: 12, color: C.dim }}>🔒 Nível {sk.lockedLevel}</div>
+                          : equipada ? <Chip color={C.green}>Equipada</Chip>
+                          : possui ? <button onClick={() => agir(salvarPerfil(me.id, { skin: sk.id }), "Skin equipada!")} style={btnStyle(C.violetHot, true)}>Equipar</button>
+                          : <button onClick={() => { if (saldo[me.id].moedas < sk.price) return notify("Moedas insuficientes. Farme mais.", C.red); agir(comprarSkin(me, sk), `Skin '${sk.name}' comprada e equipada!`); }} style={{ ...btnStyle(C.gold), display: "inline-flex", gap: 7, alignItems: "center" }}><Coin size={14} /> {fmt(sk.price)}</button>}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: 14 }}>
+                {PETS.map((pt) => {
+                  const possui = me.pets_possuidos.includes(pt.id);
+                  const junto = me.pet === pt.id;
+                  return (
+                    <div key={pt.id} style={{ ...cardStyle, textAlign: "center", border: junto ? `1.5px solid ${C.violetHot}` : `1px solid ${C.border}` }}>
+                      <div style={{ fontSize: 44 }}>{pt.icon}</div>
+                      <b style={{ fontSize: 13, display: "block", margin: "8px 0" }}>{pt.name}</b>
+                      {junto ? <Chip color={C.green}>Junto de você</Chip>
+                        : possui ? <button onClick={() => agir(salvarPerfil(me.id, { pet: pt.id }), "Pet equipado!")} style={btnStyle(C.violetHot, true)}>Equipar</button>
+                        : <button onClick={() => { if (saldo[me.id].moedas < pt.price) return notify("Moedas insuficientes.", C.red); agir(comprarPet(me, pt), `${pt.name} adotado!`); }} style={{ ...btnStyle(C.gold), display: "inline-flex", gap: 7, alignItems: "center" }}><Coin size={14} /> {fmt(pt.price)}</button>}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ============ MERCADO ============ */}
+        {view === "mercado" && (
+          <div style={{ marginTop: 16 }}>
+            <h2 style={{ margin: "0 0 4px", fontSize: 20 }}>Mercado FlixCoin</h2>
+            <p style={{ color: C.dim, fontSize: 13 }}>Recompensas REAIS. O resgate fica pendente até o gestor entregar. Saldo: <b style={{ color: C.gold }}>{fmt(saldo[me.id].moedas)}</b>.</p>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(170px, 1fr))", gap: 14 }}>
+              {MARKET.map((it) => (
+                <div key={it.id} style={{ ...cardStyle, textAlign: "center" }}>
+                  <div style={{ fontSize: 38 }}>{it.icon}</div>
+                  <b style={{ fontSize: 13, display: "block", margin: "8px 0" }}>{it.name}</b>
+                  <button onClick={() => { if (saldo[me.id].moedas < it.price) return notify("Moedas insuficientes. LEI 2.", C.red); agir(resgatarItem(me, it), "Resgate registrado! O gestor vai providenciar."); }} style={{ ...btnStyle(C.gold), display: "inline-flex", gap: 7, alignItems: "center" }}><Coin size={14} /> {fmt(it.price)}</button>
+                </div>
+              ))}
+            </div>
+            {dados.resgates.filter((r) => gestor || r.colaborador_id === me.id).length > 0 && (
+              <div style={{ ...cardStyle, marginTop: 16 }}>
+                <b style={{ fontSize: 13, letterSpacing: 1, color: C.dim }}>RESGATES {gestor ? "(providenciar)" : ""}</b>
+                {dados.resgates.filter((r) => gestor || r.colaborador_id === me.id).map((r) => {
+                  const p = colabs.find((c) => c.id === r.colaborador_id);
+                  return (
+                    <div key={r.id} style={{ display: "flex", gap: 10, alignItems: "center", padding: "8px 0", borderBottom: `1px solid ${C.border}55`, fontSize: 13 }}>
+                      {p && <Avatar p={p} size={26} />}
+                      <span style={{ flex: 1 }}><b>{p ? (p.nick || p.name.split(" ")[0]) : "—"}</b> resgatou {r.item} <span style={{ color: C.dim }}>({fmt(r.preco)} moedas)</span></span>
+                      {r.status === "pendente" ? (gestor
+                        ? <button onClick={() => agir(marcarEntregue(r.id), "Entrega registrada.")} style={{ ...btnStyle(C.green, true), padding: "5px 12px", fontSize: 11 }}>Marcar entregue</button>
+                        : <Chip color={C.orange}>Pendente</Chip>)
+                        : <Chip color={C.green}>Entregue</Chip>}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ============ IDEIAS ============ */}
+        {view === "ideias" && (
+          <div style={{ marginTop: 16, display: "grid", gap: 14 }}>
+            <h2 style={{ margin: 0, fontSize: 20 }}>Banco de Ideias</h2>
+            <p style={{ color: C.dim, fontSize: 13, margin: 0 }}>Ideia bem detalhada que economiza dinheiro ou melhora processo vira XP após avaliação do gestor. O autor vê só a recompensa, nunca o grau da avaliação.</p>
+            <FormIdeia onEnviar={(t, d) => agir(enviarIdeia(me.id, t, d), "Ideia enviada ao gestor. Quem pensa, farma.")} />
+            <div style={cardStyle}>
+              <b style={{ fontSize: 13, letterSpacing: 1, color: C.dim }}>IDEIAS</b>
+              {dados.ideias.length === 0 && <div style={{ color: C.dim2, fontSize: 13, marginTop: 8 }}>Nenhuma ideia ainda.</div>}
+              {dados.ideias.map((i) => {
+                const p = colabs.find((c) => c.id === i.colaborador_id);
+                return (
+                  <div key={i.id} style={{ padding: "12px 0", borderBottom: `1px solid ${C.border}55` }}>
+                    <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+                      {p && <Avatar p={p} size={28} />}
+                      <b style={{ fontSize: 13.5, flex: 1 }}>{i.titulo}</b>
+                      {i.status === "avaliada" ? <Chip color={C.green}>Recompensada</Chip> : <Chip color={C.orange}>Em análise</Chip>}
+                    </div>
+                    <div style={{ fontSize: 12.5, color: C.dim, margin: "6px 0 0 38px" }}>{i.descricao}</div>
+                    {gestor && i.status === "pendente" && (
+                      <div style={{ display: "flex", gap: 8, margin: "8px 0 0 38px" }}>
+                        {[["baixo", 100, C.dim], ["medio", 300, C.violetHot], ["alto", 800, C.gold]].map(([g, xp, cor]) => (
+                          <button key={g} onClick={() => agir(avaliarIdeia(i, g, xp), `Avaliada. +${xp} XP para o autor.`)} style={{ ...btnStyle(cor, true), padding: "5px 12px", fontSize: 11 }}>
+                            Impacto {g} · +{xp} XP
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* ============ PROVAS (gestor) ============ */}
+        {view === "provas" && gestor && (
+          <div style={{ marginTop: 16, display: "grid", gap: 14 }}>
+            <h2 style={{ margin: 0, fontSize: 20 }}>Provas</h2>
+            <FormProva colabs={colabs} onLancar={(pid, nome, nota, xpp) => agir(lancarProva(pid, nome, nota, xpp), `Nota ${nota} → ${fmt(nota * xpp)} XP lançados no extrato.`)} />
+            <div style={cardStyle}>
+              <b style={{ fontSize: 13, letterSpacing: 1, color: C.dim }}>HISTÓRICO</b>
+              {dados.eventos.filter((ev) => ev.origem === "prova").slice(0, 20).map((ev) => {
+                const p = colabs.find((c) => c.id === ev.colaborador_id);
+                return (
+                  <div key={ev.id} style={{ display: "flex", gap: 10, alignItems: "center", padding: "8px 0", borderBottom: `1px solid ${C.border}55`, fontSize: 13 }}>
+                    {p && <Avatar p={p} size={26} />}
+                    <span style={{ flex: 1 }}>{ev.descricao}</span>
+                    <b style={{ color: C.green }}>+{fmt(ev.xp)} XP</b>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
         {/* ============ MANUAL ============ */}
         {view === "manual" && (
           <div style={{ marginTop: 16, display: "grid", gap: 12, maxWidth: 780 }}>
@@ -474,6 +627,21 @@ export default function App() {
           boss={{ kind: "Chefão", name: chefao?.nome || "Chefão", reward: chefao?.premio_oculto || "", extra: chefao?.extra || "" }}
           player={jogador} onDone={() => setBattle(null)} />;
       })()}
+
+      {/* modal trocar senha */}
+      {senhaModal && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 95, background: "rgba(4,6,14,.85)", display: "flex", alignItems: "center", justifyContent: "center" }} onClick={() => setSenhaModal(false)}>
+          <div style={{ ...cardStyle, width: 320 }} onClick={(e) => e.stopPropagation()}>
+            <b style={{ fontSize: 15 }}>🔑 Trocar senha</b>
+            <p style={{ color: C.dim, fontSize: 12.5, margin: "6px 0 12px" }}>Mínimo de 6 caracteres. Vale a partir do próximo login.</p>
+            <input type="password" autoFocus value={novaSenha} onChange={(e) => setNovaSenha(e.target.value)} placeholder="Nova senha" style={inputStyle} />
+            <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 14 }}>
+              <button onClick={() => setSenhaModal(false)} style={btnStyle(C.dim, true)}>Cancelar</button>
+              <button disabled={novaSenha.length < 6} onClick={async () => { const e = await trocarSenha(novaSenha); if (e) notify(e, C.red); else { notify("Senha alterada."); setSenhaModal(false); } }} style={{ ...btnStyle(C.violetHot), opacity: novaSenha.length >= 6 ? 1 : 0.4 }}>Salvar</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* toast */}
       {toast && (
@@ -553,6 +721,49 @@ function FichaColab({ p, saldo, onSalvar, onAjuste }) {
         <input placeholder="Motivo do ajuste (aparece no extrato)" value={desc} onChange={(e) => setDesc(e.target.value)} style={{ ...inputStyle, flex: 1, minWidth: 200 }} />
         <button disabled={(!num(xp) && !num(moedas)) || !desc} onClick={() => { onAjuste(num(xp), num(moedas), desc); setXp(""); setMoedas(""); setDesc(""); }}
           style={{ ...btnStyle(C.gold, true), opacity: (num(xp) || num(moedas)) && desc ? 1 : 0.4, padding: "8px 14px", fontSize: 12 }}>Lançar ajuste</button>
+      </div>
+    </div>
+  );
+}
+
+
+/* ---------- formulário: nova ideia ---------- */
+function FormIdeia({ onEnviar }) {
+  const [titulo, setTitulo] = useState("");
+  const [descricao, setDescricao] = useState("");
+  return (
+    <div style={cardStyle}>
+      <b style={{ fontSize: 13, letterSpacing: 1, color: C.dim }}>NOVA IDEIA</b>
+      <div style={{ display: "grid", gap: 10, marginTop: 10 }}>
+        <input placeholder="Título da ideia" value={titulo} onChange={(e) => setTitulo(e.target.value)} style={inputStyle} />
+        <textarea placeholder="Detalhe bem: problema, solução, ganho estimado. Ideia rasa não farma XP." rows={4} value={descricao} onChange={(e) => setDescricao(e.target.value)} style={{ ...inputStyle, resize: "vertical", fontFamily: "inherit" }} />
+        <button disabled={!titulo || !descricao} onClick={() => { onEnviar(titulo, descricao); setTitulo(""); setDescricao(""); }} style={{ ...btnStyle(C.violetHot), opacity: titulo && descricao ? 1 : 0.4, justifySelf: "start" }}>Enviar ao gestor</button>
+      </div>
+    </div>
+  );
+}
+
+/* ---------- formulário: lançar prova (gestor) ---------- */
+function FormProva({ colabs, onLancar }) {
+  const [pid, setPid] = useState(colabs[0]?.id || "");
+  const [nome, setNome] = useState("");
+  const [nota, setNota] = useState("");
+  const [xpp, setXpp] = useState("10");
+  const n = Math.max(0, Math.min(100, parseInt(nota, 10) || 0));
+  const x = parseInt(xpp, 10) || 0;
+  return (
+    <div style={cardStyle}>
+      <div style={{ fontSize: 13, color: C.dim, marginBottom: 12 }}>
+        Prova vale 100 pontos. Conversão: <b style={{ color: C.text }}>1 ponto = {x} XP</b> → nota {n} rende <b style={{ color: C.green }}>{fmt(n * x)} XP</b>.
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 100px 100px auto", gap: 10 }}>
+        <select value={pid} onChange={(e) => setPid(e.target.value)} style={inputStyle}>
+          {colabs.map((c) => <option key={c.id} value={c.id}>{c.nome}</option>)}
+        </select>
+        <input placeholder="Nome da prova" value={nome} onChange={(e) => setNome(e.target.value)} style={inputStyle} />
+        <input placeholder="Nota 0-100" value={nota} onChange={(e) => setNota(e.target.value.replace(/\D/g, ""))} style={inputStyle} />
+        <input placeholder="XP/ponto" value={xpp} onChange={(e) => setXpp(e.target.value.replace(/\D/g, ""))} style={inputStyle} />
+        <button disabled={!nota || !nome} onClick={() => { onLancar(pid, nome, n, x); setNota(""); setNome(""); }} style={{ ...btnStyle(C.violetHot), opacity: nota && nome ? 1 : 0.4 }}>Lançar</button>
       </div>
     </div>
   );
