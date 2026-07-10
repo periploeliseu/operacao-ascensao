@@ -13,3 +13,11 @@ body { margin: 0; background: #070b16; }
         button:hover{ filter: brightness(1.12) }
         ::-webkit-scrollbar{ width:8px } ::-webkit-scrollbar-thumb{ background:#243354; border-radius:8px }
         @media (prefers-reduced-motion: reduce){ *{animation:none !important; transition:none !important} }
+
+@keyframes wheelSpin { from { transform: rotate(0) } to { transform: rotate(1440deg) } }
+.wheel-spin { animation: wheelSpin 2.4s cubic-bezier(.2,.8,.2,1) forwards }
+@keyframes petBob { 0%,100% { transform: translateY(0) } 50% { transform: translateY(-10px) } }
+.pet-float { animation: petBob 3s ease-in-out infinite }
+.hero-hurt { animation: shake .18s linear; filter: brightness(1.6) saturate(2) hue-rotate(-40deg) }
+.hero-down { transform: rotate(70deg) translate(20px, 26px) !important; opacity: .55; transition: transform .7s ease, opacity .7s }
+.boss-rage { filter: drop-shadow(0 0 18px #f8717a88) }

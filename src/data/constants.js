@@ -55,6 +55,7 @@ function mkPlayer(id, name, role, level, xp, coins, streak, tone, hair, sched) {
     id, name, role, level, xp, coins, streak,
     totalMonth: xp + level * 400,
     skin: "elite", ownedSkins: ["elite"],
+    nick: null, pet: null, ownedPets: [],
     tone, hair, schedule: sched, lastCheckin: null,
     attrs: {
       "Organização": 60 + ((level * 7) % 35),
@@ -79,29 +80,46 @@ function mkNewPlayer(name, role, sched) {
   return p;
 }
 
+
+/* Pets decorativos (cosmético puro) */
+const PETS = [
+  { id: "lobo", name: "Lobo de Carga", icon: "🐺", price: 1200 },
+  { id: "falcao", name: "Falcão do Inventário", icon: "🦅", price: 1500 },
+  { id: "tartaruga", name: "Tartaruga Blindada", icon: "🐢", price: 900 },
+  { id: "dragao", name: "Dragão da Auditoria", icon: "🐉", price: 3000 },
+];
+
+/* Roleta da pontualidade — 6 prêmios, pesos iguais */
+const ROULETTE = [
+  { label: "+5 XP", xp: 5 }, { label: "+6 XP", xp: 6 }, { label: "+7 XP", xp: 7 },
+  { label: "+1 moeda", coins: 1 }, { label: "+2 moedas", coins: 2 }, { label: "+3 moedas", coins: 3 },
+];
+
 const SEED = {
-  version: 4,
+  version: 5,
   players: [],
   missions: [
-    { id: "m1", name: "Inventário Perfeito",            xp: 300, boss: true,  completedBy: [] },
-    { id: "m2", name: "Recebimento Nacional sem erro",  xp: 250, boss: true,  completedBy: [] },
-    { id: "m3", name: "Zerar divergências da semana",   xp: 400, boss: true,  completedBy: [] },
-    { id: "m4", name: "Checklist de transferência",     xp: 200, boss: true,  completedBy: [] },
-    { id: "m5", name: "Organizar endereçamento A1–A4",  xp: 150, boss: false, completedBy: [] },
-    { id: "m6", name: "Treinar um colega novo",         xp: 250, boss: false, completedBy: [] },
+    { id: "m1", name: "Inventário Perfeito",            xp: 300, boss: true,  coins: 0, renew: true, punish: false, completedBy: [] },
+    { id: "m2", name: "Recebimento Nacional sem erro",  xp: 250, boss: true,  coins: 0, renew: true, punish: false, completedBy: [] },
+    { id: "m3", name: "Zerar divergências da semana",   xp: 400, boss: true,  coins: 0, renew: true, punish: false, completedBy: [] },
+    { id: "m4", name: "Checklist de transferência",     xp: 200, boss: true,  coins: 0, renew: true, punish: false, completedBy: [] },
+    { id: "m5", name: "Organizar endereçamento A1–A4",  xp: 150, boss: false, coins: 0, renew: true, punish: false, completedBy: [] },
+    { id: "m6", name: "Treinar um colega novo",         xp: 250, boss: false, coins: 0, renew: true, punish: false, completedBy: [] },
   ],
   boss: {
     name: "Devorador de Prazos",
     kind: "Chefão da Semana",
     maxHp: 0, hp: 0,
     reward: "Almoço com a diretoria + 500 FlixCoins p/ cada",
+    cap: 1000, focus: "", extra: "", deadline: null, failed: false,
     contributions: {}, defeated: false,
   },
   provas: [],
   ideas: [],
   redeems: [],
+  lastRollover: null,
   feed: [],
-  config: { xpPerPoint: 10, checkinXp: 50, latePenalty: true, penaltyValue: 20, ideaXp: { baixo: 100, medio: 300, alto: 800 }, simTime: "", gestorPin: "2026" },
+  config: { xpPerPoint: 10, checkinXp: 50, latePenalty: true, penaltyValue: 20, ideaXp: { baixo: 100, medio: 300, alto: 800 }, simTime: "", gestorPin: "2026", coinName: "FlixCoins", seasonTitle: "" },
 };
 
 /* ---------- Helpers de UI ---------- */
@@ -112,4 +130,4 @@ const ago = (t) => {
   return `há ${h}h`;
 };
 
-export { C, reqFor, uid, BOSS_CAP, SKINS, MARKET, TITLES, titleFor, SEED, fmt, ago, mkNewPlayer };
+export { C, reqFor, uid, BOSS_CAP, SKINS, MARKET, TITLES, titleFor, SEED, fmt, ago, mkNewPlayer, PETS, ROULETTE };
