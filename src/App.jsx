@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
-import { C, reqFor, uid, BOSS_CAP, SKINS, MARKET, titleFor, SEED, fmt, ago } from "./data/constants.js";
+import { C, reqFor, uid, BOSS_CAP, SKINS, MARKET, titleFor, SEED, fmt, ago, mkNewPlayer } from "./data/constants.js";
 import { applyXp, applyCoins, nowMinutes } from "./logic/game.js";
 import { loadState, saveState, clearState } from "./logic/storage.js";
 import { Avatar, HeroFigure, BossFigure } from "./components/figures.jsx";
@@ -39,10 +39,17 @@ export default function App() {
     }, 600);
   }, [state]);
 
+  /* garante que o colaborador ativo sempre exista (após exclusões) */
+  useEffect(() => {
+    if (state && state.players.length && !state.players.find((p) => p.id === activeId)) {
+      setActiveId(state.players[0].id);
+    }
+  }, [state, activeId]);
+
 
   if (!state) return <div style={{ minHeight: "100vh", background: C.bg, color: C.dim, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "system-ui" }}>Carregando Operação Ascensão…</div>;
 
-  const me = state.players.find((p) => p.id === activeId);
+  const me = state.players.find((p) => p.id === activeId) || state.players[0];
   const notify = (msg, color = C.green) => { setToast({ msg, color }); setTimeout(() => setToast(null), 3200); };
 
   /* ---------- AÇÕES ---------- */
@@ -57,6 +64,39 @@ export default function App() {
       return next;
     });
   };
+
+  /* ---------- GESTÃO DE COLABORADORES ---------- */
+  const addPlayer = (name, role, sched) => {
+    const p = mkNewPlayer(name, role, sched);
+    setState((s) => ({ ...s, players: [...s.players, p], feed: [{ id: uid(), who: p.id, text: "entrou para a Operação Ascensão", xp: 0, t: Date.now() }, ...s.feed] }));
+    setActiveId(p.id);
+    notify(`${name} entrou na equipe.`);
+  };
+  const deletePlayer = (pid) => {
+    setState((s) => {
+      const contributions = { ...s.boss.contributions };
+      delete contributions[pid];
+      return {
+        ...s,
+        players: s.players.filter((p) => p.id !== pid),
+        feed: s.feed.filter((f) => f.who !== pid),
+        provas: s.provas.filter((x) => x.pid !== pid),
+        ideas: s.ideas.filter((x) => x.pid !== pid),
+        redeems: s.redeems.filter((x) => x.pid !== pid),
+        boss: { ...s.boss, contributions },
+      };
+    });
+    notify("Colaborador excluído. Convoque um novo chefão para recalcular o HP da equipe.", C.orange);
+  };
+  const resetPlayer = (pid) => {
+    setState((s) => ({ ...s, players: s.players.map((p) => (p.id === pid ? { ...p, level: 1, xp: 0, coins: 0, streak: 0, totalMonth: 0, lastCheckin: null, skin: "elite", ownedSkins: ["elite"] } : p)) }));
+    notify("Personagem resetado: nível 1, 0 XP, 0 moedas.");
+  };
+  const adjustCoins = (pid, amt) => {
+    setState((s) => ({ ...s, players: s.players.map((p) => (p.id === pid ? { ...p, coins: Math.max(0, p.coins + amt) } : p)), feed: [{ id: uid(), who: pid, text: `recebeu ajuste de ${amt > 0 ? "+" : ""}${fmt(amt)} FlixCoins do gestor`, xp: 0, t: Date.now() }, ...s.feed] }));
+    notify("FlixCoins ajustadas.");
+  };
+  const adjustXp = (pid, amt) => gainXp(pid, amt, `recebeu ajuste de ${amt > 0 ? "+" : ""}${fmt(amt)} XP do gestor`);
 
   const completeMission = (m) => {
     if (m.completedBy.includes(activeId)) return notify("Você já concluiu esta missão.", C.orange);
@@ -140,10 +180,27 @@ export default function App() {
     setState(SEED); notify("Dados resetados para o padrão.");
   };
 
+  /* primeira execução: equipe vazia → tela de criação */
+  if (state.players.length === 0) {
+    return (
+      <div style={{ minHeight: "100vh", background: `radial-gradient(1200px 600px at 70% -10%, #1a1040 0%, ${C.bg} 55%)`, color: C.text, fontFamily: "'Segoe UI', system-ui, sans-serif", display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <SetupScreen onCreate={(pin, name, role, sched) => {
+          if (pin !== state.config.gestorPin) return notify("PIN incorreto.", C.red);
+          setGestor(true);
+          addPlayer(name, role, sched);
+        }} />
+        {toast && (
+          <div style={{ position: "fixed", bottom: 22, right: 22, zIndex: 99, background: C.panel, border: `1.5px solid ${toast.color}`, color: C.text, padding: "12px 18px", borderRadius: 12, fontSize: 13.5, fontWeight: 600 }}>{toast.msg}</div>
+        )}
+      </div>
+    );
+  }
+
   /* ---------- NAV ---------- */
   const NAV = [
     ["dashboard", "▦", "Dashboard"],
     ["missoes", "◎", "Missões"],
+    ["colaboradores", "👥", "Colaboradores"],
     ["chefao", "☠", "Chefão"],
     ["provas", "✎", "Provas"],
     ["ideias", "💡", "Banco de Ideias"],
@@ -371,10 +428,31 @@ export default function App() {
                     <div style={{ fontSize: 12, color: C.dim }}>+{fmt(m.xp)} XP · +{fmt(Math.round(m.xp / 10))} FlixCoins {m.boss && <span style={{ color: C.orange }}>· vinculada ao Chefão</span>}</div>
                   </div>
                   {done ? <Chip color={C.green}>Concluída</Chip> : <button onClick={() => completeMission(m)} style={btnStyle(C.violetHot)}>Concluir</button>}
+                  {gestor && <button onClick={() => { setState((s) => ({ ...s, missions: s.missions.filter((x) => x.id !== m.id) })); notify("Missão excluída."); }} style={{ ...btnStyle(C.red, true), padding: "7px 10px" }}>🗑</button>}
                 </div>
               );
             })}
+            {gestor && (
+              <button onClick={() => { setState((s) => ({ ...s, missions: s.missions.map((m) => ({ ...m, completedBy: [] })) })); notify("Conclusões limpas — missões liberadas para todos."); }} style={{ ...btnStyle(C.orange, true), justifySelf: "start" }}>
+                ♻ Limpar conclusões (libera as missões de novo)
+              </button>
+            )}
             {gestor && <AddMission onAdd={(name, xp, boss) => setState((s) => ({ ...s, missions: [...s.missions, { id: uid(), name, xp, boss, completedBy: [] }] }))} />}
+          </div>
+        )}
+
+        {view === "colaboradores" && (
+          <div style={{ marginTop: 16, display: "grid", gap: 14 }}>
+            <h2 style={{ margin: 0, fontSize: 20 }}>Colaboradores</h2>
+            {!gestor && <p style={{ color: C.orange, fontSize: 13, margin: 0 }}>Criação, exclusão e ajustes exigem o Modo Gestor.</p>}
+            {state.players.map((p) => (
+              <PlayerAdmin key={p.id} p={p} gestor={gestor}
+                onReset={() => resetPlayer(p.id)}
+                onDelete={() => deletePlayer(p.id)}
+                onCoins={(v) => adjustCoins(p.id, v)}
+                onXp={(v) => adjustXp(p.id, v)} />
+            ))}
+            {gestor && <AddPlayerForm onAdd={addPlayer} />}
           </div>
         )}
 
@@ -387,7 +465,7 @@ export default function App() {
               <BossFigure size={210} />
               <div style={{ maxWidth: 480, margin: "10px auto" }}>
                 <Bar value={state.boss.hp} max={state.boss.maxHp} color={C.red} h={14} />
-                <div style={{ fontSize: 13, color: C.dim, marginTop: 5 }}>{fmt(state.boss.hp)} / {fmt(state.boss.maxHp)} HP {state.boss.defeated && <b style={{ color: C.gold }}> — DERROTADO! 🏆</b>}</div>
+                <div style={{ fontSize: 13, color: C.dim, marginTop: 5 }}>{fmt(state.boss.hp)} / {fmt(state.boss.maxHp)} HP {state.boss.defeated && <b style={{ color: C.gold }}> — DERROTADO! 🏆</b>}{state.boss.maxHp === 0 && <b style={{ color: C.orange }}> — aguardando o gestor convocar</b>}</div>
               </div>
               <p style={{ color: C.dim, fontSize: 13, maxWidth: 560, margin: "6px auto" }}>
                 Cada colaborador precisa causar <b style={{ color: C.text }}>{fmt(BOSS_CAP)} XP</b> de dano via missões ☠. Se UM não bater a meta, o chefão sobrevive. A equipe vence junta ou não vence.
@@ -409,8 +487,8 @@ export default function App() {
               })}
             </div>
             {gestor && (
-              <button style={{ ...btnStyle(C.red, true), marginTop: 14 }} onClick={() => setState((s) => ({ ...s, boss: { ...s.boss, hp: s.boss.maxHp, defeated: false, contributions: {} }, missions: s.missions.map((m) => ({ ...m, completedBy: [] })) }))}>
-                ↺ Novo chefão (reseta missões e HP)
+              <button style={{ ...btnStyle(C.red, true), marginTop: 14 }} onClick={() => { setState((s) => { const hp = s.players.length * BOSS_CAP; return { ...s, boss: { ...s.boss, maxHp: hp, hp, defeated: false, contributions: {} }, missions: s.missions.map((m) => ({ ...m, completedBy: [] })) }; }); notify("Chefão convocado com HP proporcional à equipe."); }}>
+                ⚔ Convocar novo chefão ({fmt(state.players.length * BOSS_CAP)} HP · {state.players.length} colaboradores × 1.000)
               </button>
             )}
           </div>
@@ -664,3 +742,79 @@ export default function App() {
   );
 }
 
+
+
+/* ---------- Administração de colaboradores (gestor) ---------- */
+function PlayerAdmin({ p, gestor, onReset, onDelete, onCoins, onXp }) {
+  const [coins, setCoins] = useState("");
+  const [xp, setXp] = useState("");
+  const num = (v) => parseInt(v, 10) || 0;
+  return (
+    <div style={cardStyle}>
+      <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+        <Avatar p={p} size={40} />
+        <div style={{ flex: 1, minWidth: 160 }}>
+          <b>{p.name}</b>
+          <div style={{ fontSize: 12, color: C.dim }}>{p.role} · Nível {p.level} · {fmt(p.coins)} FlixCoins · turno {p.schedule}</div>
+        </div>
+        {gestor && (
+          <>
+            <button onClick={onReset} style={{ ...btnStyle(C.orange, true), padding: "6px 12px", fontSize: 11 }}>↺ Resetar</button>
+            <button onClick={() => { if (window.confirm(`Excluir ${p.name}? Todo o histórico dele some.`)) onDelete(); }} style={{ ...btnStyle(C.red, true), padding: "6px 12px", fontSize: 11 }}>🗑 Excluir</button>
+          </>
+        )}
+      </div>
+      {gestor && (
+        <div style={{ display: "flex", gap: 10, marginTop: 12, flexWrap: "wrap", alignItems: "center" }}>
+          <input placeholder="± FlixCoins (ex: 500 ou -200)" value={coins} onChange={(e) => setCoins(e.target.value.replace(/[^0-9-]/g, ""))} style={{ ...inputStyle, width: 200 }} />
+          <button disabled={!num(coins)} onClick={() => { onCoins(num(coins)); setCoins(""); }} style={{ ...btnStyle(C.gold, true), opacity: num(coins) ? 1 : 0.4, padding: "8px 14px", fontSize: 12 }}>Aplicar moedas</button>
+          <input placeholder="± XP (ex: 300 ou -100)" value={xp} onChange={(e) => setXp(e.target.value.replace(/[^0-9-]/g, ""))} style={{ ...inputStyle, width: 170 }} />
+          <button disabled={!num(xp)} onClick={() => { onXp(num(xp)); setXp(""); }} style={{ ...btnStyle(C.violetHot, true), opacity: num(xp) ? 1 : 0.4, padding: "8px 14px", fontSize: 12 }}>Aplicar XP</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AddPlayerForm({ onAdd }) {
+  const [name, setName] = useState("");
+  const [role, setRole] = useState("");
+  const [sched, setSched] = useState("09:00");
+  return (
+    <div style={{ ...cardStyle, border: `1px dashed ${C.border2}` }}>
+      <b style={{ fontSize: 13, letterSpacing: 1, color: C.dim }}>GESTOR — NOVO COLABORADOR</b>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 110px auto", gap: 10, marginTop: 10 }}>
+        <input placeholder="Nome completo" value={name} onChange={(e) => setName(e.target.value)} style={inputStyle} />
+        <input placeholder="Função (ex: Conferente)" value={role} onChange={(e) => setRole(e.target.value)} style={inputStyle} />
+        <input placeholder="Turno" value={sched} onChange={(e) => setSched(e.target.value)} style={inputStyle} />
+        <button disabled={!name} onClick={() => { onAdd(name, role, sched); setName(""); setRole(""); }} style={{ ...btnStyle(C.violetHot), opacity: name ? 1 : 0.4 }}>Adicionar</button>
+      </div>
+      <div style={{ fontSize: 11.5, color: C.dim2, marginTop: 8 }}>Turno no formato HH:MM — define a janela do check-in diário (−10min a +5min). Todo colaborador nasce no nível 1 com 0 XP e 0 moedas (LEI 2).</div>
+    </div>
+  );
+}
+
+/* ---------- Primeira execução: montar a equipe ---------- */
+function SetupScreen({ onCreate }) {
+  const [pin, setPin] = useState("");
+  const [name, setName] = useState("");
+  const [role, setRole] = useState("");
+  const [sched, setSched] = useState("09:00");
+  return (
+    <div style={{ ...cardStyle, width: "min(460px, 92vw)", textAlign: "center" }}>
+      <div style={{ fontSize: 36 }}>🏔️</div>
+      <h2 style={{ margin: "6px 0 4px" }}>Operação Ascensão</h2>
+      <p style={{ color: C.dim, fontSize: 13, marginTop: 0 }}>
+        O jogo começa do zero. Gestor: digite o PIN e crie o primeiro colaborador.
+        Os demais você adiciona na aba <b style={{ color: C.text }}>Colaboradores</b>.
+      </p>
+      <div style={{ display: "grid", gap: 10, textAlign: "left" }}>
+        <input type="password" placeholder="PIN do Gestor" value={pin} onChange={(e) => setPin(e.target.value)} style={inputStyle} />
+        <input placeholder="Nome do colaborador" value={name} onChange={(e) => setName(e.target.value)} style={inputStyle} />
+        <input placeholder="Função (ex: Operador de Estoque)" value={role} onChange={(e) => setRole(e.target.value)} style={inputStyle} />
+        <input placeholder="Turno (HH:MM)" value={sched} onChange={(e) => setSched(e.target.value)} style={inputStyle} />
+        <button disabled={!pin || !name} onClick={() => onCreate(pin, name, role, sched)} style={{ ...btnStyle(C.violetHot), opacity: pin && name ? 1 : 0.4 }}>Criar e começar</button>
+      </div>
+    </div>
+  );
+}

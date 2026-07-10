@@ -3,7 +3,7 @@ import { C } from "../data/constants.js";
 
 /* ---------- Barra de XP ---------- */
 function Bar({ value, max, color = C.violetHot, h = 8 }) {
-  const pct = Math.max(0, Math.min(100, (value / max) * 100));
+  const pct = max > 0 ? Math.max(0, Math.min(100, (value / max) * 100)) : 0;
   return (
     <div style={{ height: h, background: "#1a2440", borderRadius: h, overflow: "hidden" }}>
       <div style={{ width: `${pct}%`, height: "100%", borderRadius: h, background: `linear-gradient(90deg, ${C.violetDeep}, ${color})`, boxShadow: `0 0 10px ${color}88`, transition: "width .6s ease" }} />

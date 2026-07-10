@@ -67,16 +67,21 @@ function mkPlayer(id, name, role, level, xp, coins, streak, tone, hair, sched) {
   };
 }
 
+/* Paletas para novos colaboradores (tom de pele e cabelo do avatar) */
+const TONES = ["#c98d63", "#8d5a3b", "#a06a44", "#d9a06f", "#b97a50", "#e3b48a", "#7a4a2e", "#caa27a"];
+const HAIRS = ["#141420", "#241a12", "#101018", "#2b1a10", "#15161e", "#1c1410", "#30231a", "#0d0d12"];
+
+/* Novo colaborador SEMPRE começa do zero: nível 1, 0 XP, 0 moedas (LEI 2) */
+function mkNewPlayer(name, role, sched) {
+  const i = Math.floor(Math.random() * TONES.length);
+  const p = mkPlayer("pl" + uid(), name, role || "Colaborador", 1, 0, 0, 0, TONES[i], HAIRS[i], sched || "09:00");
+  p.totalMonth = 0;
+  return p;
+}
+
 const SEED = {
-  version: 3,
-  players: [
-    mkPlayer("p1", "Andressa Silva", "Operadora de Estoque", 15, 8450, 2450, 27, "#c98d63", "#141420", "09:00"),
-    mkPlayer("p2", "Mauro Lima",     "Conferente",           13, 6230, 1800, 12, "#8d5a3b", "#241a12", "08:00"),
-    mkPlayer("p3", "José Pereira",   "Auxiliar de Estoque",  12, 5480, 1500, 9,  "#a06a44", "#101018", "09:00"),
-    mkPlayer("p4", "Lunara Costa",   "Operadora de Estoque", 11, 4210, 1200, 15, "#d9a06f", "#2b1a10", "09:00"),
-    mkPlayer("p5", "Carlos Souza",   "Conferente",           10, 3890, 900,  5,  "#b97a50", "#15161e", "07:00"),
-    mkPlayer("p6", "Ana Rocha",      "Auxiliar de Estoque",  9,  3150, 700,  21, "#e3b48a", "#1c1410", "09:00"),
-  ],
+  version: 4,
+  players: [],
   missions: [
     { id: "m1", name: "Inventário Perfeito",            xp: 300, boss: true,  completedBy: [] },
     { id: "m2", name: "Recebimento Nacional sem erro",  xp: 250, boss: true,  completedBy: [] },
@@ -88,18 +93,14 @@ const SEED = {
   boss: {
     name: "Devorador de Prazos",
     kind: "Chefão da Semana",
-    maxHp: 6000, hp: 6000,
+    maxHp: 0, hp: 0,
     reward: "Almoço com a diretoria + 500 FlixCoins p/ cada",
     contributions: {}, defeated: false,
   },
   provas: [],
   ideas: [],
   redeems: [],
-  feed: [
-    { id: uid(), who: "p1", text: "concluiu a missão 'Inventário Perfeito'", xp: 300, t: Date.now() - 2 * 36e5 },
-    { id: uid(), who: "p3", text: "concluiu 'Recebimento Nacional'", xp: 250, t: Date.now() - 3 * 36e5 },
-    { id: uid(), who: "p2", text: "alcançou o nível 13", xp: 500, t: Date.now() - 5 * 36e5 },
-  ],
+  feed: [],
   config: { xpPerPoint: 10, checkinXp: 50, latePenalty: true, penaltyValue: 20, ideaXp: { baixo: 100, medio: 300, alto: 800 }, simTime: "", gestorPin: "2026" },
 };
 
@@ -111,4 +112,4 @@ const ago = (t) => {
   return `há ${h}h`;
 };
 
-export { C, reqFor, uid, BOSS_CAP, SKINS, MARKET, TITLES, titleFor, SEED, fmt, ago };
+export { C, reqFor, uid, BOSS_CAP, SKINS, MARKET, TITLES, titleFor, SEED, fmt, ago, mkNewPlayer };
