@@ -1,0 +1,15 @@
+* { box-sizing: border-box; }
+body { margin: 0; background: #070b16; }
+
+@keyframes floatUp { 0%{transform:translateY(0);opacity:1} 100%{transform:translateY(-70px);opacity:0} }
+        .dmg-float{ animation: floatUp 1s ease-out forwards; pointer-events:none }
+        @keyframes shake { 0%,100%{transform:translateX(0) rotate(0)} 25%{transform:translateX(-9px) rotate(-2deg)} 75%{transform:translateX(9px) rotate(2deg)} }
+        .boss-hurt{ animation: shake .18s linear; filter: brightness(1.6) hue-rotate(-30deg) }
+        .lunge{ transform: translateX(46px) !important }
+        @keyframes pop { 0%{transform:scale(.4);opacity:0} 70%{transform:scale(1.12)} 100%{transform:scale(1);opacity:1} }
+        .banner-pop{ animation: pop .45s cubic-bezier(.2,1.4,.4,1) }
+        @keyframes glowPulse { 0%,100%{box-shadow:0 0 14px #a855f733} 50%{box-shadow:0 0 26px #a855f766} }
+        .glow{ animation: glowPulse 2.6s infinite }
+        button:hover{ filter: brightness(1.12) }
+        ::-webkit-scrollbar{ width:8px } ::-webkit-scrollbar-thumb{ background:#243354; border-radius:8px }
+        @media (prefers-reduced-motion: reduce){ *{animation:none !important; transition:none !important} }
