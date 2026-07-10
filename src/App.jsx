@@ -1,11 +1,11 @@
 import React, { useState, useEffect, useRef } from "react";
-import { C, reqFor, uid, BOSS_CAP, SKINS, MARKET, titleFor, SEED, fmt, ago, mkNewPlayer } from "./data/constants.js";
+import { C, reqFor, uid, BOSS_CAP, SKINS, MARKET, titleFor, SEED, fmt, ago, mkNewPlayer, PETS, ROULETTE } from "./data/constants.js";
 import { applyXp, applyCoins, nowMinutes } from "./logic/game.js";
 import { loadState, saveState, clearState } from "./logic/storage.js";
 import { Avatar, HeroFigure, BossFigure } from "./components/figures.jsx";
 import { Bar, Chip, Coin, btnStyle, inputStyle, cardStyle } from "./components/ui.jsx";
 import BattleOverlay from "./components/BattleOverlay.jsx";
-import { ProvaForm, AddMission, IdeaForm } from "./components/forms.jsx";
+import { ProvaForm, AddMission, IdeaForm, BossForm } from "./components/forms.jsx";
 
 export default function App() {
   const [state, setState] = useState(null);
@@ -17,6 +17,11 @@ export default function App() {
   const [toast, setToast] = useState(null);
   const [pinModal, setPinModal] = useState(false);
   const [pinInput, setPinInput] = useState("");
+  const [cover, setCover] = useState(true);
+  const [wheel, setWheel] = useState(null);
+  const [editNick, setEditNick] = useState(false);
+  const [nickDraft, setNickDraft] = useState("");
+  const [terminal, setTerminal] = useState(() => { try { return localStorage.getItem("ascensao:terminal") === "1"; } catch { return false; } });
   const saveT = useRef(null);
 
   /* carregar / salvar */
@@ -38,6 +43,41 @@ export default function App() {
       await saveState(state);
     }, 600);
   }, [state]);
+
+  /* virada do dia: renova missões fixas/diárias e aplica punições das diárias */
+  useEffect(() => {
+    if (!state) return;
+    const today = new Date().toDateString();
+    if (state.lastRollover === today) return;
+    setState((s) => {
+      if (s.lastRollover === today) return s;
+      let next = { ...s, lastRollover: today };
+      if (s.lastRollover) {
+        s.missions.filter((m) => m.renew).forEach((m) => {
+          if (m.punish) {
+            s.players.forEach((p) => {
+              if (!m.completedBy.includes(p.id)) {
+                const r = applyXp(next, p.id, -m.xp, `não concluiu a diária '${m.name}' (-${fmt(m.xp)} XP, -5 ${s.config.coinName})`);
+                next = r.next;
+                next = { ...next, players: next.players.map((x) => (x.id === p.id ? { ...x, coins: x.coins - 5 } : x)) };
+              }
+            });
+          }
+        });
+        next = { ...next, missions: next.missions.map((m) => (m.renew ? { ...m, completedBy: [] } : m)) };
+      }
+      return next;
+    });
+  }, [state && state.lastRollover]);
+
+  /* prazo do chefão estourou com HP sobrando → derrota da equipe */
+  useEffect(() => {
+    if (!state || !state.boss.deadline || state.boss.defeated || state.boss.failed) return;
+    if (Date.now() > state.boss.deadline && state.boss.hp > 0) {
+      setState((s) => ({ ...s, boss: { ...s.boss, failed: true } }));
+      setBattle({ pid: activeId, dmg: 0, kind: "fail", hpBefore: state.boss.hp, maxHp: state.boss.maxHp, cap: state.boss.cap });
+    }
+  }, [state, activeId]);
 
   /* garante que o colaborador ativo sempre exista (após exclusões) */
   useEffect(() => {
@@ -103,21 +143,23 @@ export default function App() {
     setState((s) => {
       let next = { ...s, missions: s.missions.map((x) => (x.id === m.id ? { ...x, completedBy: [...x.completedBy, activeId] } : x)) };
       const r = applyXp(next, activeId, m.xp, `concluiu a missão '${m.name}'`);
-      next = applyCoins(r.next, activeId, Math.round(m.xp / 10));
-      if (m.boss && !next.boss.defeated && next.boss.hp > 0) {
+      next = applyCoins(r.next, activeId, m.coins || 0);
+      if (m.boss && !next.boss.defeated && !next.boss.failed && next.boss.hp > 0) {
         const contrib = next.boss.contributions[activeId] || 0;
-        const dmg = Math.min(m.xp, BOSS_CAP - contrib, next.boss.hp);
+        const cap = next.boss.cap || BOSS_CAP;
+        const dmg = Math.min(m.xp, cap - contrib, next.boss.hp);
         if (dmg > 0) {
           const hpBefore = next.boss.hp;
           const newContrib = contrib + dmg;
           const hpAfter = hpBefore - dmg;
           next = { ...next, boss: { ...next.boss, hp: hpAfter, defeated: hpAfter <= 0, contributions: { ...next.boss.contributions, [activeId]: newContrib } } };
-          const kind = hpAfter <= 0 ? "victory" : newContrib >= BOSS_CAP ? "combo" : "hit";
-          setTimeout(() => setBattle({ pid: activeId, dmg, kind, hpBefore, maxHp: next.boss.maxHp }), 50);
+          const kind = hpAfter <= 0 ? "victory" : newContrib >= cap ? "combo" : "hit";
+          setTimeout(() => setBattle({ pid: activeId, dmg, kind, hpBefore, maxHp: next.boss.maxHp, cap }), 50);
         }
       }
       return next;
     });
+    if (m.coins) setTimeout(() => notify(`🎁 Prêmio surpresa: +${m.coins} ${state.config.coinName}!`, C.gold), 400);
   };
 
   const applyProva = (pid, nome, nota) => {
@@ -147,38 +189,58 @@ export default function App() {
       let next = applyCoins(s, activeId, -item.price);
       if (kind === "skin") {
         next = { ...next, players: next.players.map((p) => (p.id === activeId ? { ...p, ownedSkins: [...p.ownedSkins, item.id], skin: item.id } : p)) };
+      } else if (kind === "pet") {
+        next = { ...next, players: next.players.map((p) => (p.id === activeId ? { ...p, ownedPets: [...(p.ownedPets || []), item.id], pet: item.id } : p)) };
       } else {
         next = { ...next, redeems: [{ id: uid(), pid: activeId, item: item.name, price: item.price, t: Date.now(), status: "pendente" }, ...next.redeems] };
       }
-      return { ...next, feed: [{ id: uid(), who: activeId, text: kind === "skin" ? `desbloqueou a skin '${item.name}'` : `resgatou '${item.name}' no mercado`, xp: 0, t: Date.now() }, ...next.feed] };
+      return { ...next, feed: [{ id: uid(), who: activeId, text: kind === "skin" ? `desbloqueou a skin '${item.name}'` : kind === "pet" ? `adotou o pet '${item.name}'` : `resgatou '${item.name}' no mercado`, xp: 0, t: Date.now() }, ...next.feed] };
     });
-    notify(kind === "skin" ? `Skin '${item.name}' equipada!` : `Resgate de '${item.name}' registrado. O gestor vai providenciar.`);
+    notify(kind === "skin" ? `Skin '${item.name}' equipada!` : kind === "pet" ? `${item.name} agora anda com você!` : `Resgate de '${item.name}' registrado. O gestor vai providenciar.`);
   };
 
-  const checkin = () => {
+  /* Roleta da Pontualidade: só no terminal oficial, só na janela do turno (início até +5min) */
+  const spinWheel = () => {
     const today = new Date().toDateString();
-    if (me.lastCheckin === today) return notify("Check-in de hoje já foi feito.", C.orange);
-    const [h, m] = me.schedule.split(":").map(Number);
-    const start = h * 60 + m;
+    if (me.lastCheckin === today) return notify("Você já girou a roleta hoje. Amanhã tem mais.", C.orange);
+    if (!terminal) return notify("A roleta só gira no terminal oficial do estoque. Gestor: autorize este aparelho em Configurações.", C.orange);
+    const [h, mm] = me.schedule.split(":").map(Number);
+    const startMin = h * 60 + mm;
     const now = nowMinutes(state.config);
-    const inWindow = now >= start - 10 && now <= start + 5;
-    const late = now > start + 5;
-    setState((s) => ({ ...s, players: s.players.map((p) => (p.id === activeId ? { ...p, lastCheckin: today, streak: inWindow ? p.streak + 1 : 0 } : p)) }));
-    if (inWindow) {
-      gainXp(activeId, state.config.checkinXp, "fez check-in no horário 🔥", 10);
-      notify(`Check-in no horário! +${state.config.checkinXp} XP, sequência mantida.`);
-    } else if (late && state.config.latePenalty) {
-      gainXp(activeId, -state.config.penaltyValue, "perdeu XP por check-in atrasado");
-      notify(`Atrasado. -${state.config.penaltyValue} XP e sequência zerada.`, C.red);
-    } else {
-      notify(late ? "Atrasado. Sequência zerada, sem XP hoje." : "Ainda não abriu a janela de check-in.", C.orange);
+    if (now < startMin) return notify(`A roleta abre às ${me.schedule} em ponto e fecha 5 minutos depois.`, C.orange);
+    if (now > startMin + 5) {
+      setState((s) => ({ ...s, players: s.players.map((p) => (p.id === activeId ? { ...p, lastCheckin: today, streak: 0 } : p)) }));
+      if (state.config.latePenalty) gainXp(activeId, -state.config.penaltyValue, "perdeu XP por atraso na roleta da pontualidade");
+      return notify("Janela perdida. Sequência zerada.", C.red);
     }
+    const prize = ROULETTE[Math.floor(Math.random() * ROULETTE.length)];
+    setWheel({ prize, spinning: true });
+    setState((s) => ({ ...s, players: s.players.map((p) => (p.id === activeId ? { ...p, lastCheckin: today, streak: p.streak + 1 } : p)) }));
+    setTimeout(() => {
+      if (prize.xp) gainXp(activeId, prize.xp, `girou a roleta da pontualidade: ${prize.label} 🔥`);
+      if (prize.coins) setState((s) => ({ ...s, players: s.players.map((p) => (p.id === activeId ? { ...p, coins: p.coins + prize.coins } : p)), feed: [{ id: uid(), who: activeId, text: `girou a roleta da pontualidade: ${prize.label} 🔥`, xp: 0, t: Date.now() }, ...s.feed] }));
+      setWheel((w) => w && { ...w, spinning: false });
+    }, 2600);
   };
 
   const resetAll = async () => {
     await clearState();
     setState(SEED); notify("Dados resetados para o padrão.");
   };
+
+  /* capa da temporada (LEI 4: todo mês existe algo novo) */
+  if (cover) {
+    const seasonLabel = state.config.seasonTitle || `Temporada ${new Date().toLocaleDateString("pt-BR", { month: "long", year: "numeric" })}`;
+    return (
+      <div onClick={() => setCover(false)} style={{ minHeight: "100vh", cursor: "pointer", background: `radial-gradient(900px 500px at 50% 20%, #2a104f 0%, ${C.bg} 60%)`, color: C.text, fontFamily: "'Segoe UI', system-ui, sans-serif", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 8, textAlign: "center", padding: 20 }}>
+        <svg width="70" height="70" viewBox="0 0 40 40"><path d="M6 30 L16 10 L23 24 L28 16 L34 30 Z" fill="none" stroke={C.blue} strokeWidth="3" strokeLinejoin="round" /></svg>
+        <div style={{ fontSize: "clamp(26px, 6vw, 44px)", fontWeight: 900, letterSpacing: 4, textShadow: `0 0 30px ${C.violetHot}88` }}>OPERAÇÃO ASCENSÃO</div>
+        <div style={{ color: C.violetHot, fontWeight: 700, letterSpacing: 2, textTransform: "uppercase" }}>{seasonLabel}</div>
+        <button style={{ ...btnStyle(C.violetHot), marginTop: 26, padding: "13px 44px", fontSize: 15, letterSpacing: 2 }}>INICIAR</button>
+        <div style={{ color: C.dim2, fontSize: 12, marginTop: 8 }}>toque em qualquer lugar para entrar</div>
+      </div>
+    );
+  }
 
   /* primeira execução: equipe vazia → tela de criação */
   if (state.players.length === 0) {
@@ -208,6 +270,7 @@ export default function App() {
     ["conquistas", "🏅", "Conquistas"],
     ["loja", "🛍", "Loja de Skins", true],
     ["mercado", "🛒", "Mercado"],
+    ["manual", "📖", "Manual"],
     ["config", "⚙", "Configurações"],
   ];
 
@@ -256,10 +319,20 @@ export default function App() {
         <header style={{ display: "flex", alignItems: "center", gap: 22, background: C.panel, border: `1px solid ${C.border}`, borderRadius: 14, padding: "12px 18px", flexWrap: "wrap" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
             <Avatar p={me} size={46} ring={C.violet} />
-            <div>
-              <div style={{ fontWeight: 800, fontSize: 17 }}>{me.name}</div>
-              <div style={{ color: C.blue, fontSize: 12 }}>{me.role}</div>
-            </div>
+            {editNick ? (
+              <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                <input autoFocus value={nickDraft} onChange={(e) => setNickDraft(e.target.value.slice(0, 18))} placeholder="Nome de jogo" style={{ ...inputStyle, width: 160, padding: "7px 10px" }} />
+                <button onClick={() => { setState((s) => ({ ...s, players: s.players.map((p) => (p.id === activeId ? { ...p, nick: nickDraft.trim() || null } : p)) })); setEditNick(false); }} style={{ ...btnStyle(C.violetHot), padding: "7px 12px", fontSize: 12 }}>OK</button>
+              </div>
+            ) : (
+              <div>
+                <div style={{ fontWeight: 800, fontSize: 17, display: "flex", gap: 7, alignItems: "center" }}>
+                  {me.nick || me.name}
+                  <button onClick={() => { setNickDraft(me.nick || ""); setEditNick(true); }} title="Escolher nome de jogo" style={{ background: "none", border: "none", color: C.dim, cursor: "pointer", fontSize: 13, padding: 0 }}>✏️</button>
+                </div>
+                <div style={{ color: C.blue, fontSize: 12 }}>{me.nick ? `${me.name} · ${me.role}` : me.role}</div>
+              </div>
+            )}
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <div className="glow" style={{ border: `2px solid ${C.violetHot}`, borderRadius: 10, padding: "4px 12px", textAlign: "center" }}>
@@ -274,7 +347,7 @@ export default function App() {
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <Coin size={26} />
-            <div><div style={{ fontSize: 10, color: C.dim, letterSpacing: 1 }}>FLIX COINS</div><div style={{ fontWeight: 800, fontSize: 17 }}>{fmt(me.coins)}</div></div>
+            <div><div style={{ fontSize: 10, color: C.dim, letterSpacing: 1 }}>{state.config.coinName.toUpperCase()}</div><div style={{ fontWeight: 800, fontSize: 17 }}>{fmt(me.coins)}</div></div>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <span style={{ fontSize: 22 }}>🏆</span>
@@ -302,8 +375,9 @@ export default function App() {
                     </div>
                   ))}
                 </div>
-                <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", position: "relative" }}>
                   <HeroFigure p={me} height={330} />
+                  {me.pet && <div className="pet-float" style={{ position: "absolute", bottom: 20, right: "16%", fontSize: 46 }}>{(PETS.find((x) => x.id === me.pet) || {}).icon}</div>}
                 </div>
                 <div style={{ width: 190, display: "flex", flexDirection: "column", gap: 12 }}>
                   <div style={{ background: C.panel2, border: `1px solid ${C.border}`, borderRadius: 10, padding: 12 }}>
@@ -322,7 +396,7 @@ export default function App() {
                 </div>
               </div>
               <div style={{ display: "flex", gap: 12, marginTop: 14, alignItems: "center" }}>
-                <button onClick={checkin} style={btnStyle(C.violetHot)}>✓ Check-in diário</button>
+                <button onClick={spinWheel} style={btnStyle(C.violetHot)}>🎰 Roleta da Pontualidade</button>
                 <div style={{ flex: 1, background: C.panel2, border: `1px solid ${C.border}`, borderRadius: 10, padding: "10px 14px" }}>
                   <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: C.dim }}>
                     <span>Próximo nível — <b style={{ color: C.text }}>{titleFor(me.level + 1)}</b></span>
@@ -365,6 +439,22 @@ export default function App() {
                     );
                   })}
                 </div>
+              ) : skinTab === "ITENS" ? (
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: 12 }}>
+                  {PETS.map((pt) => {
+                    const owned = (me.ownedPets || []).includes(pt.id);
+                    const equipped = me.pet === pt.id;
+                    return (
+                      <div key={pt.id} style={{ background: C.panel2, border: `1.5px solid ${equipped ? C.violetHot : C.border}`, borderRadius: 12, padding: 12, textAlign: "center" }}>
+                        <div style={{ fontSize: 40 }}>{pt.icon}</div>
+                        <div style={{ fontSize: 12, fontWeight: 700, margin: "6px 0 4px" }}>{pt.name}</div>
+                        {equipped ? <Chip color={C.green}>Junto de você</Chip>
+                          : owned ? <button onClick={() => setState((s) => ({ ...s, players: s.players.map((p) => (p.id === activeId ? { ...p, pet: pt.id } : p)) }))} style={{ ...btnStyle(C.violetHot, true), padding: "5px 12px", fontSize: 11 }}>Equipar</button>
+                          : <button onClick={() => buy(pt, "pet")} style={{ ...btnStyle(C.gold, true), padding: "5px 12px", fontSize: 11, display: "inline-flex", gap: 6, alignItems: "center" }}><Coin size={13} /> {fmt(pt.price)}</button>}
+                      </div>
+                    );
+                  })}
+                </div>
               ) : (
                 <div style={{ color: C.dim, fontSize: 13, padding: 30, textAlign: "center" }}>“{skinTab}” chega na próxima temporada. LEI 4: todo mês existe algo novo.</div>
               )}
@@ -388,7 +478,8 @@ export default function App() {
                     padding: "10px 12px", cursor: "pointer", textAlign: "center", color: C.text, minWidth: 92,
                   }}>
                     <Avatar p={p} size={44} ring={p.id === activeId ? C.violetHot : undefined} />
-                    <div style={{ fontSize: 12, fontWeight: 700, marginTop: 6 }}>{p.name.split(" ")[0]}</div>
+                    <div style={{ fontSize: 12, fontWeight: 700, marginTop: 6 }}>{p.nick || p.name.split(" ")[0]}</div>
+                    {p.nick && <div style={{ fontSize: 9.5, color: C.dim2 }}>{p.name.split(" ")[0]}</div>}
                     <div style={{ fontSize: 10.5, color: C.dim }}>Nível {p.level}</div>
                     <div style={{ fontSize: 10.5, color: C.violetHot, fontWeight: 700 }}>{fmt(p.totalMonth)} XP</div>
                   </button>
@@ -425,7 +516,7 @@ export default function App() {
                   <span style={{ fontSize: 22 }}>{m.boss ? "☠" : "◎"}</span>
                   <div style={{ flex: 1 }}>
                     <b style={{ fontSize: 14 }}>{m.name}</b>
-                    <div style={{ fontSize: 12, color: C.dim }}>+{fmt(m.xp)} XP · +{fmt(Math.round(m.xp / 10))} FlixCoins {m.boss && <span style={{ color: C.orange }}>· vinculada ao Chefão</span>}</div>
+                    <div style={{ fontSize: 12, color: C.dim }}>+{fmt(m.xp)} XP {m.renew ? (m.punish ? <span style={{ color: C.red }}>· Diária — pune se não concluir</span> : <span>· Fixa — renova à meia-noite</span>) : <span>· Esporádica</span>} {m.boss && <span style={{ color: C.orange }}>· vinculada ao Chefão</span>}</div>
                   </div>
                   {done ? <Chip color={C.green}>Concluída</Chip> : <button onClick={() => completeMission(m)} style={btnStyle(C.violetHot)}>Concluir</button>}
                   {gestor && <button onClick={() => { setState((s) => ({ ...s, missions: s.missions.filter((x) => x.id !== m.id) })); notify("Missão excluída."); }} style={{ ...btnStyle(C.red, true), padding: "7px 10px" }}>🗑</button>}
@@ -437,7 +528,7 @@ export default function App() {
                 ♻ Limpar conclusões (libera as missões de novo)
               </button>
             )}
-            {gestor && <AddMission onAdd={(name, xp, boss) => setState((s) => ({ ...s, missions: [...s.missions, { id: uid(), name, xp, boss, completedBy: [] }] }))} />}
+            {gestor && <AddMission onAdd={(name, xp, boss, coins, renew, punish) => setState((s) => ({ ...s, missions: [...s.missions, { id: uid(), name, xp, boss, coins, renew, punish, completedBy: [] }] }))} />}
           </div>
         )}
 
@@ -461,36 +552,44 @@ export default function App() {
             <div style={{ ...cardStyle, textAlign: "center", background: `radial-gradient(500px 260px at 50% 0%, #2a104f55, ${C.panel})` }}>
               <Chip color={C.orange}>{state.boss.kind}</Chip>
               <h2 style={{ margin: "10px 0 2px", fontSize: 26, letterSpacing: 1 }}>{state.boss.name}</h2>
-              <div style={{ color: C.gold, fontSize: 13, marginBottom: 10 }}>🏆 Prêmio: {state.boss.reward}</div>
+              {state.boss.focus && <div style={{ color: C.blue, fontSize: 13, marginBottom: 4 }}>🎯 Foco: {state.boss.focus}</div>}
+              <div style={{ color: C.gold, fontSize: 13, marginBottom: 10 }}>
+                🎁 Prêmio: {gestor ? <b>{state.boss.reward}{state.boss.extra ? ` + ${state.boss.extra}` : ""} <span style={{ color: C.dim }}>(oculto p/ equipe)</span></b> : <b>??? — derrotem o chefão para descobrir</b>}
+              </div>
               <BossFigure size={210} />
               <div style={{ maxWidth: 480, margin: "10px auto" }}>
                 <Bar value={state.boss.hp} max={state.boss.maxHp} color={C.red} h={14} />
-                <div style={{ fontSize: 13, color: C.dim, marginTop: 5 }}>{fmt(state.boss.hp)} / {fmt(state.boss.maxHp)} HP {state.boss.defeated && <b style={{ color: C.gold }}> — DERROTADO! 🏆</b>}{state.boss.maxHp === 0 && <b style={{ color: C.orange }}> — aguardando o gestor convocar</b>}</div>
+                <div style={{ fontSize: 13, color: C.dim, marginTop: 5 }}>
+                  {fmt(state.boss.hp)} / {fmt(state.boss.maxHp)} HP
+                  {state.boss.defeated && <b style={{ color: C.gold }}> — DERROTADO! 🏆 Prêmio: {state.boss.reward}{state.boss.extra ? ` + ${state.boss.extra}` : ""}</b>}
+                  {state.boss.failed && <b style={{ color: C.red }}> — ELE VENCEU. Preparem-se para a revanche.</b>}
+                  {state.boss.maxHp === 0 && <b style={{ color: C.orange }}> — aguardando o gestor convocar</b>}
+                </div>
+                {state.boss.deadline && !state.boss.defeated && !state.boss.failed && state.boss.maxHp > 0 && (
+                  <div style={{ fontSize: 12.5, color: C.orange, marginTop: 4 }}>⏳ Tempo restante: {Math.max(0, Math.ceil((state.boss.deadline - Date.now()) / 864e5))} dia(s)</div>
+                )}
               </div>
               <p style={{ color: C.dim, fontSize: 13, maxWidth: 560, margin: "6px auto" }}>
-                Cada colaborador precisa causar <b style={{ color: C.text }}>{fmt(BOSS_CAP)} XP</b> de dano via missões ☠. Se UM não bater a meta, o chefão sobrevive. A equipe vence junta ou não vence.
+                Cada colaborador precisa causar <b style={{ color: C.text }}>{fmt(state.boss.cap || BOSS_CAP)} XP</b> de dano via missões ☠ antes do prazo. Se UM não bater a cota, o chefão vence. A equipe vence junta ou não vence.
               </p>
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", gap: 12, marginTop: 14 }}>
               {state.players.map((p) => {
                 const c = state.boss.contributions[p.id] || 0;
+                const cap = state.boss.cap || BOSS_CAP;
                 return (
                   <div key={p.id} style={cardStyle}>
                     <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 8 }}>
                       <Avatar p={p} size={36} />
-                      <div><b style={{ fontSize: 13 }}>{p.name.split(" ")[0]}</b><div style={{ fontSize: 11, color: c >= BOSS_CAP ? C.green : C.dim }}>{c >= BOSS_CAP ? "Meta batida! ⚔️" : "Em combate"}</div></div>
+                      <div><b style={{ fontSize: 13 }}>{p.nick || p.name.split(" ")[0]}</b><div style={{ fontSize: 11, color: c >= cap ? C.green : C.dim }}>{c >= cap ? "Meta batida! ⚔️" : "Em combate"}</div></div>
                     </div>
-                    <Bar value={c} max={BOSS_CAP} color={c >= BOSS_CAP ? C.green : C.violetHot} />
-                    <div style={{ fontSize: 11.5, color: C.dim, marginTop: 4, textAlign: "right" }}>{fmt(c)} / {fmt(BOSS_CAP)} XP de dano</div>
+                    <Bar value={c} max={cap} color={c >= cap ? C.green : C.violetHot} />
+                    <div style={{ fontSize: 11.5, color: C.dim, marginTop: 4, textAlign: "right" }}>{fmt(c)} / {fmt(cap)} XP de dano</div>
                   </div>
                 );
               })}
             </div>
-            {gestor && (
-              <button style={{ ...btnStyle(C.red, true), marginTop: 14 }} onClick={() => { setState((s) => { const hp = s.players.length * BOSS_CAP; return { ...s, boss: { ...s.boss, maxHp: hp, hp, defeated: false, contributions: {} }, missions: s.missions.map((m) => ({ ...m, completedBy: [] })) }; }); notify("Chefão convocado com HP proporcional à equipe."); }}>
-                ⚔ Convocar novo chefão ({fmt(state.players.length * BOSS_CAP)} HP · {state.players.length} colaboradores × 1.000)
-              </button>
-            )}
+            {gestor && <BossForm onSummon={(b) => { setState((s) => ({ ...s, boss: { ...s.boss, ...b, hp: b.maxHp, cap: Math.ceil(b.maxHp / Math.max(1, s.players.length)), contributions: {}, defeated: false, failed: false }, missions: s.missions.map((m) => ({ ...m, completedBy: [] })) })); notify("Chefão convocado. Missões liberadas — boa caçada."); }} />}
           </div>
         )}
 
@@ -666,6 +765,28 @@ export default function App() {
           </div>
         )}
 
+        {view === "manual" && (
+          <div style={{ marginTop: 16, display: "grid", gap: 12, maxWidth: 780 }}>
+            <h2 style={{ margin: 0, fontSize: 20 }}>📖 Manual do Jogo</h2>
+            {[
+              ["O que é a Operação Ascensão", `Plataforma de gamificação do estoque. Trabalho de verdade gera XP, XP sobe seu nível e ${state.config.coinName} compram recompensas reais. LEI 1: tudo gera XP. LEI 2: nada é de graça. LEI 3: nível conquistado é seu para sempre. LEI 4: todo mês existe algo novo.`],
+              ["Dashboard", "Sua central: personagem, atributos, nível, sequência e a Roleta. Clique no ✏️ ao lado do seu nome para escolher seu nome de jogo — o nome real continua visível embaixo."],
+              ["🎰 Roleta da Pontualidade", "Abre todo dia no horário do seu turno e fica ativa por 5 minutos (turno 09:00 → roleta de 09:00 a 09:05), somente no terminal oficial do estoque. Girou na janela: prêmio + sequência mantida. Perdeu a janela: sequência zerada e punição de XP."],
+              ["Missões", `Fixas e Diárias renovam à meia-noite; Esporádicas são únicas. Missões ☠ causam dano no Chefão. O XP é visível, mas as ${state.config.coinName} são SURPRESA — algumas missões pagam, outras não. Diária não concluída: perde o XP previsto e 5 ${state.config.coinName}. Compromisso com todas, não só com as fáceis.`],
+              ["☠ Chefão", "Vilão da semana ou do mês com um foco definido pelo gestor (ex: organização, qualidade dos testes). Cada colaborador tem uma cota de dano. Todos batem a cota antes do prazo → o chefão cai e o prêmio secreto é revelado. Um falhar → ele vence, e a derrota aparece na tela."],
+              ["Banco de Ideias", "Ideia bem detalhada que economiza dinheiro ou melhora processo vira XP após avaliação do gestor. Ideia rasa não farma."],
+              ["Provas", "Avaliações valem até 100 pontos; cada ponto vira XP na conversão definida pelo gestor."],
+              ["Loja & Mercado", `Skins e pets são cosméticos — identidade do seu personagem. O Mercado troca ${state.config.coinName} por recompensas REAIS (camisa, curso, PIX, Airbnb…). Resgates ficam pendentes até o gestor entregar.`],
+              ["Ranking & Conquistas", "Ranking do mês por XP farmado — o 1º lugar leva prêmios de verdade. O feed registra tudo: transparência total, inclusive ajustes do gestor."],
+            ].map(([t, d]) => (
+              <div key={t} style={cardStyle}>
+                <b style={{ fontSize: 14 }}>{t}</b>
+                <p style={{ color: C.dim, fontSize: 13, margin: "6px 0 0", lineHeight: 1.7 }}>{d}</p>
+              </div>
+            ))}
+          </div>
+        )}
+
         {view === "config" && (
           <div style={{ marginTop: 16, display: "grid", gap: 14, maxWidth: 640 }}>
             <h2 style={{ margin: 0, fontSize: 20 }}>Configurações {gestor ? "" : "(somente leitura — ative o Modo Gestor)"}</h2>
@@ -684,6 +805,16 @@ export default function App() {
                 </label>
                 <label style={{ fontSize: 13 }}>Simular horário atual (HH:MM) — para testar o check-in
                   <input placeholder="ex: 08:55 (vazio = relógio real)" disabled={!gestor} value={state.config.simTime} onChange={(e) => setState((s) => ({ ...s, config: { ...s.config, simTime: e.target.value } }))} style={{ ...inputStyle, marginTop: 5 }} />
+                </label>
+                <label style={{ fontSize: 13 }}>Nome da moeda do jogo
+                  <input disabled={!gestor} value={state.config.coinName} onChange={(e) => setState((s) => ({ ...s, config: { ...s.config, coinName: e.target.value } }))} style={{ ...inputStyle, marginTop: 5 }} />
+                </label>
+                <label style={{ fontSize: 13 }}>Título da temporada (capa do mês)
+                  <input disabled={!gestor} placeholder="ex: Temporada Julho — A Grande Auditoria" value={state.config.seasonTitle || ""} onChange={(e) => setState((s) => ({ ...s, config: { ...s.config, seasonTitle: e.target.value } }))} style={{ ...inputStyle, marginTop: 5 }} />
+                </label>
+                <label style={{ fontSize: 13, display: "flex", gap: 10, alignItems: "center" }}>
+                  <input type="checkbox" disabled={!gestor} checked={terminal} onChange={(e) => { setTerminal(e.target.checked); try { if (e.target.checked) localStorage.setItem("ascensao:terminal", "1"); else localStorage.removeItem("ascensao:terminal"); } catch {} }} />
+                  Este aparelho é o TERMINAL OFICIAL do estoque (a roleta da pontualidade só gira aqui)
                 </label>
                 {gestor && (
                   <label style={{ fontSize: 13 }}>PIN do Gestor (troque o padrão 2026 antes de liberar pra equipe)
@@ -709,6 +840,29 @@ export default function App() {
       {/* overlay de batalha */}
       {battle && (
         <BattleOverlay battle={battle} boss={state.boss} player={state.players.find((p) => p.id === battle.pid)} onDone={() => setBattle(null)} />
+      )}
+
+      {/* roleta da pontualidade */}
+      {wheel && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 96, background: "rgba(4,6,14,.9)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <div style={{ ...cardStyle, width: 340, textAlign: "center" }}>
+            <b style={{ fontSize: 15, letterSpacing: 1 }}>🎰 ROLETA DA PONTUALIDADE</b>
+            <div style={{ display: "flex", justifyContent: "center", margin: "18px 0" }}>
+              <div className={wheel.spinning ? "wheel-spin" : ""} style={{ width: 170, height: 170, borderRadius: "50%", border: `6px solid ${C.gold}`, background: `conic-gradient(${C.violetDeep} 0 60deg, #1c2942 60deg 120deg, ${C.violetDeep} 120deg 180deg, #1c2942 180deg 240deg, ${C.violetDeep} 240deg 300deg, #1c2942 300deg 360deg)`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 42 }}>
+                {wheel.spinning ? "🎲" : "🎉"}
+              </div>
+            </div>
+            {wheel.spinning ? (
+              <div style={{ color: C.dim, fontSize: 13 }}>Girando…</div>
+            ) : (
+              <>
+                <div className="banner-pop" style={{ fontSize: 24, fontWeight: 900, color: C.gold }}>{wheel.prize.label}!</div>
+                <div style={{ color: C.dim, fontSize: 12.5, margin: "6px 0 12px" }}>Pontualidade paga. Sequência: {me.streak} dias 🔥</div>
+                <button onClick={() => setWheel(null)} style={btnStyle(C.violetHot)}>Fechar</button>
+              </>
+            )}
+          </div>
+        </div>
       )}
 
       {/* modal de PIN do gestor */}
