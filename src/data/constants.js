@@ -47,8 +47,26 @@ const MARKET = [
   { id: "airbnb",  name: "Fim de semana Airbnb",  price: 12000, icon: "🏡" },
 ];
 
-const TITLES = ["Recruta", "Operador", "Especialista em Conferência", "Veterano", "Arauto da Organização", "Máquina de Produção", "Lenda Viva"];
-const titleFor = (lvl) => TITLES[Math.min(TITLES.length - 1, Math.floor(lvl / 5))];
+/* 9 categorias de raridade × 5 patentes = 45 títulos. 1 patente por nível. */
+const CATEGORIAS = [
+  { nome: "Comum",         icone: "🟢", cor: "#34d399", patentes: ["Recruta", "Operador", "Executor", "Especialista", "Veterano"] },
+  { nome: "Incomum",       icone: "🔵", cor: "#38bdf8", patentes: ["Guardião", "Sentinela", "Patrulheiro", "Defensor", "Supervisor"] },
+  { nome: "Raro",          icone: "🟣", cor: "#a855f7", patentes: ["Mestre", "Estrategista", "Comandante", "Oficial", "Arquiteto"] },
+  { nome: "Super Raro",    icone: "🟠", cor: "#fb923c", patentes: ["Marechal", "Titã", "Soberano", "General", "Imperador"] },
+  { nome: "Épico",         icone: "🔴", cor: "#f8717a", patentes: ["Lenda", "Campeão Supremo", "Guardião Supremo", "Conquistador", "Herói da Ascensão"] },
+  { nome: "Mítico",        icone: "🟡", cor: "#fbbf24", patentes: ["Arconte", "Ascendente", "Dominador", "Arquiteto Supremo", "Supremo Executor"] },
+  { nome: "Lendário",      icone: "🌈", cor: "#f0abfc", patentes: ["Avatar da Logística", "Senhor da Operação", "Mestre Absoluto", "Lenda Viva", "Escolhido da Ascensão"] },
+  { nome: "Transcendente", icone: "👑", cor: "#e6c463", patentes: ["Semideus", "Primordial", "Ancião Supremo", "Entidade Suprema", "Avatar Supremo"] },
+  { nome: "Deus",          icone: "⚡", cor: "#7dd3fc", patentes: ["Deus da Logística", "Deus da Precisão", "Deus da Operação", "Deus da Ascensão", "Criador da Ordem"] },
+];
+/* Patente completa de um nível (trava no topo: 45+) */
+function patenteDe(level) {
+  const idx = Math.min(44, Math.max(0, level - 1));
+  const cat = CATEGORIAS[Math.floor(idx / 5)];
+  return { titulo: cat.patentes[idx % 5], categoria: cat.nome, cor: cat.cor, icone: cat.icone };
+}
+/* Compatibilidade: título simples do nível */
+const titleFor = (lvl) => patenteDe(lvl).titulo;
 
 function mkPlayer(id, name, role, level, xp, coins, streak, tone, hair, sched) {
   return {
@@ -130,4 +148,4 @@ const ago = (t) => {
   return `há ${h}h`;
 };
 
-export { C, reqFor, uid, BOSS_CAP, SKINS, MARKET, TITLES, titleFor, SEED, fmt, ago, mkNewPlayer, PETS, ROULETTE };
+export { C, reqFor, uid, BOSS_CAP, SKINS, MARKET, CATEGORIAS, patenteDe, titleFor, SEED, fmt, ago, mkNewPlayer, PETS, ROULETTE };

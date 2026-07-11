@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from "react";
-import { C, reqFor, BOSS_CAP, SKINS, PETS, MARKET, titleFor, fmt, ago } from "./data/constants.js";
+import { C, reqFor, BOSS_CAP, SKINS, PETS, MARKET, titleFor, patenteDe, CATEGORIAS, fmt, ago } from "./data/constants.js";
 import { Avatar, HeroFigure, BossFigure } from "./components/figures.jsx";
 import { Bar, Chip, Coin, btnStyle, inputStyle, cardStyle } from "./components/ui.jsx";
 import BattleOverlay from "./components/BattleOverlay.jsx";
@@ -39,7 +39,6 @@ function nivelDe(totalXp) {
 
 /* XP total acumulado necessário para ALCANÇAR um nível */
 function xpTotalParaNivel(l) { let t = 0; for (let i = 1; i < l; i++) t += reqFor(i); return t; }
-const PATENTES = [1, 5, 10, 15, 20, 25, 30];
 
 /* sequência 🔥: dias consecutivos com giro na roleta */
 function calcSequencia(eventos, pid) {
@@ -111,6 +110,7 @@ export default function App() {
     if (ev.xp > 0 && d.getMonth() === mesAtual && d.getFullYear() === anoAtual) s.mes += ev.xp;
   });
   const nivel = nivelDe(saldo[me.id].xp);
+  const pat = patenteDe(nivel.level);
   const ranked = [...colabs].sort((a, b) => saldo[b.id].mes - saldo[a.id].mes);
   const myRank = ranked.findIndex((c) => c.id === me.id) + 1;
 
@@ -267,7 +267,7 @@ export default function App() {
               <div style={{ fontWeight: 900, fontSize: 20, color: C.violetHot }}>{nivel.level}</div>
             </div>
             <div style={{ width: 210 }}>
-              <div style={{ fontSize: 11, color: C.dim, marginBottom: 4 }}>XP · {titleFor(nivel.level)}</div>
+              <div style={{ fontSize: 11, marginBottom: 4 }}><span style={{ color: C.dim }}>XP · </span><b style={{ color: pat.cor }}>{pat.icone} {pat.titulo}</b></div>
               <Bar value={nivel.xp} max={nivel.req} />
               <div style={{ fontSize: 11, color: C.dim, textAlign: "right", marginTop: 3 }}>{fmt(nivel.xp)} / {fmt(nivel.req)}</div>
             </div>
@@ -305,9 +305,10 @@ export default function App() {
                 <HeroFigure p={me} height={400} />
                 {me.pet && <div className="pet-float" style={{ position: "absolute", bottom: 24, right: -46, fontSize: 52 }}>{(PETS.find((x) => x.id === me.pet) || {}).icon}</div>}
               </div>
-              <div style={{ marginTop: 16, fontWeight: 900, fontSize: 24, letterSpacing: 4, color: C.violetHot, textShadow: `0 0 28px ${C.violetHot}99` }}>
-                {titleFor(nivel.level).toUpperCase()}
+              <div style={{ marginTop: 16, fontWeight: 900, fontSize: 24, letterSpacing: 4, color: pat.cor, textShadow: `0 0 28px ${pat.cor}99` }}>
+                {pat.titulo.toUpperCase()}
               </div>
+              <div style={{ marginTop: 4, fontSize: 12, fontWeight: 700, letterSpacing: 2, color: C.dim }}>{pat.icone} CATEGORIA {pat.categoria.toUpperCase()}</div>
               <button onClick={girar} style={{ ...btnStyle(C.violetHot), marginTop: 18, padding: "11px 26px" }}>🎰 Roleta da Pontualidade</button>
               <div style={{ fontSize: 11, color: C.dim2, marginTop: 8 }}>Abre às {String(me.turno).slice(0, 5)} e fecha 5 min depois — pelo relógio do servidor.</div>
             </div>
@@ -452,21 +453,30 @@ export default function App() {
         )}
 
         {view === "ranking" && (
-          <div style={{ marginTop: 14, ...cardStyle, maxWidth: 760 }}>
-            <b style={{ fontSize: 13, letterSpacing: 1, color: C.dim }}>🎖 A ESCADA — PATENTES E XP TOTAL</b>
-            {PATENTES.map((lv) => {
-              const alcancado = saldo[me.id].xp >= xpTotalParaNivel(lv);
-              const atual = nivel.level >= lv && (PATENTES[PATENTES.indexOf(lv) + 1] === undefined || nivel.level < PATENTES[PATENTES.indexOf(lv) + 1]);
-              return (
-                <div key={lv} style={{ display: "flex", alignItems: "center", gap: 12, padding: "9px 0", borderBottom: `1px solid ${C.border}55`, fontSize: 13, opacity: alcancado ? 1 : 0.65 }}>
-                  <span style={{ width: 24, textAlign: "center", fontSize: 16 }}>{alcancado ? "✅" : "🔒"}</span>
-                  <b style={{ flex: 1, color: atual ? C.violetHot : C.text }}>{titleFor(lv)}{atual && <span style={{ color: C.gold }}> ← você está aqui</span>}</b>
-                  <span style={{ color: C.dim }}>nível {lv}{lv === 30 ? "+" : ""}</span>
-                  <b style={{ color: C.blue, minWidth: 110, textAlign: "right" }}>{fmt(xpTotalParaNivel(lv))} XP total</b>
+          <div style={{ marginTop: 14, ...cardStyle, maxWidth: 780 }}>
+            <b style={{ fontSize: 13, letterSpacing: 1, color: C.dim }}>🎖 A ESCADA — 45 PATENTES EM 9 CATEGORIAS</b>
+            {CATEGORIAS.map((cat, ci) => (
+              <div key={cat.nome} style={{ marginTop: 14 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 800, color: cat.cor, letterSpacing: 1.5, fontSize: 13 }}>
+                  <span>{cat.icone}</span>{cat.nome.toUpperCase()}
+                  <span style={{ color: C.dim2, fontWeight: 400, fontSize: 11, letterSpacing: 0 }}>· níveis {ci * 5 + 1}–{ci * 5 + 5}</span>
                 </div>
-              );
-            })}
-            <div style={{ fontSize: 11.5, color: C.dim2, marginTop: 8 }}>LEI 3: patente alcançada é sua para sempre. Cada nível a partir do 15 custa 10.000 XP.</div>
+                {cat.patentes.map((pt, pi) => {
+                  const lv = ci * 5 + pi + 1;
+                  const alcancado = nivel.level >= lv;
+                  const atual = nivel.level === lv || (lv === 45 && nivel.level > 45);
+                  return (
+                    <div key={pt} style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 0 6px 26px", borderBottom: `1px solid ${C.border}44`, fontSize: 12.5, opacity: alcancado ? 1 : 0.6 }}>
+                      <span style={{ width: 18, textAlign: "center" }}>{alcancado ? "✅" : "🔒"}</span>
+                      <b style={{ flex: 1, color: atual ? cat.cor : C.text }}>{pt}{atual && <span style={{ color: C.gold }}> ← você está aqui</span>}</b>
+                      <span style={{ color: C.dim }}>nível {lv}</span>
+                      <b style={{ color: C.blue, minWidth: 105, textAlign: "right" }}>{fmt(xpTotalParaNivel(lv))} XP</b>
+                    </div>
+                  );
+                })}
+              </div>
+            ))}
+            <div style={{ fontSize: 11.5, color: C.dim2, marginTop: 10 }}>LEI 3: patente alcançada é sua para sempre. Um título novo a cada nível — 45 degraus até Criador da Ordem.</div>
           </div>
         )}
 
