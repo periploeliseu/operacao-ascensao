@@ -140,6 +140,7 @@ export default function App() {
     return cl ? cl.status : null; /* null = disponível (fixa/diária renovam à meia-noite) */
   };
   const pendentes = dados.conclusoes.filter((cl) => cl.status === "pendente");
+  const disponiveis = dados.missoes.filter((m) => statusMissao(m) === null).length;
 
   const aprovar = async (cl, sim) => {
     /* prepara a animação ANTES de aplicar, para capturar o HP anterior */
@@ -177,7 +178,7 @@ export default function App() {
 
   const NAV = [
     ["dashboard", "▦", "Dashboard"],
-    ["missoes", "◎", "Missões"],
+    ...(gestor ? [["missoes", "◎", "Missões"]] : []),
     ...(gestor ? [["aprovacoes", "✔", `Aprovações${pendentes.length ? ` (${pendentes.length})` : ""}`]] : []),
     ["chefao", "☠", "Chefão"],
     ["ranking", "♛", "Ranking"],
@@ -265,6 +266,9 @@ export default function App() {
             <span style={{ fontSize: 22 }}>🏆</span>
             <div><div style={{ fontSize: 10, color: C.dim, letterSpacing: 1 }}>RANKING</div><div style={{ fontWeight: 800, fontSize: 17 }}>{myRank}º</div></div>
           </div>
+          <button onClick={() => setView("missoes")} style={{ ...btnStyle(C.violetHot, view !== "missoes"), padding: "9px 16px", fontSize: 13 }}>
+            ◎ Minhas Missões{disponiveis > 0 ? ` (${disponiveis})` : ""}
+          </button>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <span style={{ fontSize: 20 }}>🔥</span>
             <div><div style={{ fontSize: 10, color: C.dim, letterSpacing: 1 }}>SEQUÊNCIA</div><div style={{ fontWeight: 800, fontSize: 17, color: C.orange }}>{calcSequencia(dados.eventos, me.id)} dias</div></div>
@@ -275,49 +279,24 @@ export default function App() {
           </div>
         </header>
 
-        {/* ============ DASHBOARD ============ */}
+        {/* ============ DASHBOARD (palco decorativo) ============ */}
         {view === "dashboard" && (
-          <div style={{ display: "grid", gridTemplateColumns: "minmax(340px, 5fr) minmax(340px, 7fr)", gap: 16, marginTop: 16 }}>
-            <section style={{ ...cardStyle, textAlign: "center" }}>
-              <HeroFigure p={me} height={300} />
-              <div style={{ marginTop: 10, fontWeight: 800, color: C.violetHot }}>{titleFor(nivel.level).toUpperCase()}</div>
-              <div style={{ fontSize: 12, color: C.dim, marginTop: 4 }}>{me.funcao} · Região {me.regiao} · Turno {String(me.turno).slice(0, 5)}</div>
-              <button onClick={girar} style={{ ...btnStyle(C.violetHot), marginTop: 12 }}>🎰 Roleta da Pontualidade</button>
-              <div style={{ fontSize: 11, color: C.dim2, marginTop: 6 }}>Abre às {String(me.turno).slice(0, 5)} e fecha 5 min depois — pelo relógio do servidor.</div>
-            </section>
-            <section style={{ display: "grid", gap: 16, alignContent: "start" }}>
-              <div style={cardStyle}>
-                <b style={{ fontSize: 12, letterSpacing: 1.5, color: C.dim }}>MINHAS MISSÕES</b>
-                {dados.missoes.slice(0, 4).map((m) => {
-                  const st = statusMissao(m);
-                  return (
-                    <div key={m.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 0", borderBottom: `1px solid ${C.border}55`, fontSize: 13 }}>
-                      <span>{m.chefao_id ? "☠" : "◎"}</span>
-                      <span style={{ flex: 1 }}>{m.nome} <span style={{ color: C.dim }}>· +{fmt(m.xp)} XP</span></span>
-                      {st === "pendente" ? <Chip color={C.orange}>Aguardando gestor</Chip>
-                        : st === "aprovada" ? <Chip color={C.green}>Concluída</Chip>
-                        : <button onClick={() => agir(enviarConclusao(m.id, me.id), "Enviado para aprovação do gestor.")} style={{ ...btnStyle(C.violetHot), padding: "6px 14px", fontSize: 12 }}>Concluí</button>}
-                    </div>
-                  );
-                })}
-                <button onClick={() => setView("missoes")} style={{ ...btnStyle(C.violetHot, true), marginTop: 10, padding: "6px 14px", fontSize: 12 }}>Ver todas</button>
+          <div style={{ marginTop: 16, position: "relative", overflow: "hidden", borderRadius: 18, border: `1px solid ${C.border}`, minHeight: "74vh", display: "flex", alignItems: "center", justifyContent: "center", background: `radial-gradient(900px 520px at 50% 8%, #2a104f66 0%, transparent 60%), radial-gradient(700px 420px at 18% 92%, #10306055 0%, transparent 60%), linear-gradient(180deg, #0b1120, #070b16)` }}>
+            <div className="orbe o1" />
+            <div className="orbe o2" />
+            <div className="orbe o3" />
+            <div className="grade" />
+            <div style={{ position: "relative", textAlign: "center", padding: 20 }}>
+              <div className="aura" style={{ position: "relative", display: "inline-block" }}>
+                <HeroFigure p={me} height={400} />
+                {me.pet && <div className="pet-float" style={{ position: "absolute", bottom: 24, right: -46, fontSize: 52 }}>{(PETS.find((x) => x.id === me.pet) || {}).icon}</div>}
               </div>
-              <div style={cardStyle}>
-                <b style={{ fontSize: 12, letterSpacing: 1.5, color: C.dim }}>ÚLTIMAS CONQUISTAS DA EQUIPE</b>
-                {dados.eventos.slice(0, 6).map((ev) => {
-                  const p = colabs.find((c) => c.id === ev.colaborador_id);
-                  if (!p) return null;
-                  return (
-                    <div key={ev.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 0", borderBottom: `1px solid ${C.border}55`, fontSize: 12.5 }}>
-                      <Avatar p={p} size={28} />
-                      <span style={{ flex: 1 }}><b style={{ color: C.blue }}>{p.nick || p.name.split(" ")[0]}</b> {ev.descricao || ev.origem}</span>
-                      {ev.xp !== 0 && <b style={{ color: ev.xp > 0 ? C.green : C.red }}>{ev.xp > 0 ? "+" : ""}{fmt(ev.xp)} XP</b>}
-                      <span style={{ color: C.dim2, fontSize: 11 }}>{ago(new Date(ev.criado_em).getTime())}</span>
-                    </div>
-                  );
-                })}
+              <div style={{ marginTop: 16, fontWeight: 900, fontSize: 24, letterSpacing: 4, color: C.violetHot, textShadow: `0 0 28px ${C.violetHot}99` }}>
+                {titleFor(nivel.level).toUpperCase()}
               </div>
-            </section>
+              <button onClick={girar} style={{ ...btnStyle(C.violetHot), marginTop: 18, padding: "11px 26px" }}>🎰 Roleta da Pontualidade</button>
+              <div style={{ fontSize: 11, color: C.dim2, marginTop: 8 }}>Abre às {String(me.turno).slice(0, 5)} e fecha 5 min depois — pelo relógio do servidor.</div>
+            </div>
           </div>
         )}
 
@@ -474,6 +453,24 @@ export default function App() {
               );
             })}
             <div style={{ fontSize: 11.5, color: C.dim2, marginTop: 8 }}>LEI 3: patente alcançada é sua para sempre. Cada nível a partir do 15 custa 10.000 XP.</div>
+          </div>
+        )}
+
+        {view === "ranking" && (
+          <div style={{ marginTop: 14, ...cardStyle, maxWidth: 760 }}>
+            <b style={{ fontSize: 13, letterSpacing: 1, color: C.dim }}>ÚLTIMAS CONQUISTAS DA EQUIPE</b>
+            {dados.eventos.slice(0, 10).map((ev) => {
+              const p = colabs.find((c) => c.id === ev.colaborador_id);
+              if (!p) return null;
+              return (
+                <div key={ev.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 0", borderBottom: `1px solid ${C.border}55`, fontSize: 12.5 }}>
+                  <Avatar p={p} size={28} />
+                  <span style={{ flex: 1 }}><b style={{ color: C.blue }}>{p.nick || p.name.split(" ")[0]}</b> {ev.descricao || ev.origem}</span>
+                  {ev.xp !== 0 && <b style={{ color: ev.xp > 0 ? C.green : C.red }}>{ev.xp > 0 ? "+" : ""}{fmt(ev.xp)} XP</b>}
+                  <span style={{ color: C.dim2, fontSize: 11 }}>{ago(new Date(ev.criado_em).getTime())}</span>
+                </div>
+              );
+            })}
           </div>
         )}
 

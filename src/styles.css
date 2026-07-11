@@ -21,3 +21,17 @@ body { margin: 0; background: #070b16; }
 .hero-hurt { animation: shake .18s linear; filter: brightness(1.6) saturate(2) hue-rotate(-40deg) }
 .hero-down { transform: rotate(70deg) translate(20px, 26px) !important; opacity: .55; transition: transform .7s ease, opacity .7s }
 .boss-rage { filter: drop-shadow(0 0 18px #f8717a88) }
+
+/* ---- palco do dashboard ---- */
+@keyframes orbFloat { 0%,100% { transform: translateY(0) } 50% { transform: translateY(-34px) } }
+.orbe { position: absolute; border-radius: 50%; filter: blur(46px); opacity: .32; animation: orbFloat 9s ease-in-out infinite; pointer-events: none }
+.o1 { width: 280px; height: 280px; background: #7c3aed; top: 6%; left: 10% }
+.o2 { width: 220px; height: 220px; background: #2563eb; bottom: 8%; right: 12%; animation-duration: 13s }
+.o3 { width: 150px; height: 150px; background: #a855f7; top: 58%; left: 72%; animation-duration: 7s }
+@keyframes auraPulse { 0%,100% { filter: drop-shadow(0 0 22px #a855f766) } 50% { filter: drop-shadow(0 0 52px #a855f7bb) } }
+.aura { animation: auraPulse 4.5s ease-in-out infinite }
+.grade { position: absolute; inset: 0; pointer-events: none;
+  background-image: linear-gradient(#8b5cf612 1px, transparent 1px), linear-gradient(90deg, #8b5cf612 1px, transparent 1px);
+  background-size: 48px 48px;
+  -webkit-mask-image: radial-gradient(640px 440px at 50% 62%, #000, transparent);
+  mask-image: radial-gradient(640px 440px at 50% 62%, #000, transparent) }
