@@ -25,7 +25,7 @@ function traduzErro(msg) {
 
 /* ---------- carga geral ---------- */
 export async function carregarTudo() {
-  const [c, m, ch, ev, cl, id, rg] = await Promise.all([
+  const [c, m, ch, ev, cl, id, rg, md] = await Promise.all([
     supabase.from("colaboradores").select("*").order("nome"),
     supabase.from("missoes").select("*").eq("ativa", true).order("criado_em"),
     supabase.from("chefoes").select("*").neq("status", "arquivado").order("criado_em", { ascending: false }).limit(1),
@@ -33,10 +33,11 @@ export async function carregarTudo() {
     supabase.from("conclusoes").select("*, missoes(nome, xp, moedas_ocultas, chefao_id)").order("enviada_em", { ascending: false }).limit(500),
     supabase.from("ideias").select("*").order("criado_em", { ascending: false }).limit(200),
     supabase.from("resgates").select("*").order("criado_em", { ascending: false }).limit(200),
+    supabase.from("modelos_missao").select("*").order("nome"),
   ]);
   const erro = c.error || m.error || ch.error || ev.error || cl.error;
   if (erro) throw erro;
-  return { colabs: c.data, missoes: m.data, chefao: ch.data[0] || null, eventos: ev.data, conclusoes: cl.data, ideias: id.data || [], resgates: rg.data || [] };
+  return { colabs: c.data, missoes: m.data, chefao: ch.data[0] || null, eventos: ev.data, conclusoes: cl.data, ideias: id.data || [], resgates: rg.data || [], modelos: md.data || [] };
 }
 
 /* ---------- colaborador ---------- */
@@ -73,7 +74,7 @@ export async function avaliarConclusao(conclusao, aprovar) {
       xp: m.xp,
       moedas: m.moedas_ocultas || 0,
       descricao: `Missão aprovada: ${m.nome}`,
-      referencia_id: conclusao.missao_id,
+      referencia_id: m.chefao_id || conclusao.missao_id,
     });
     if (e2) return e2.message;
   }
@@ -181,5 +182,21 @@ export async function lerConfig(chave) {
 }
 export async function salvarConfig(chave, valor) {
   const { error } = await supabase.from("config").upsert({ chave, valor });
+  return error?.message || null;
+}
+
+/* ---------- ideias: exclusão pelo gestor ---------- */
+export async function excluirIdeia(id) {
+  const { error } = await supabase.from("ideias").delete().eq("id", id);
+  return error?.message || null;
+}
+
+/* ---------- colinha do gestor (modelos de missão) ---------- */
+export async function criarModelo(m) {
+  const { error } = await supabase.from("modelos_missao").insert(m);
+  return error?.message || null;
+}
+export async function excluirModelo(id) {
+  const { error } = await supabase.from("modelos_missao").delete().eq("id", id);
   return error?.message || null;
 }

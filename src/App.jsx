@@ -12,6 +12,7 @@ import {
   trocarSenha, comprarSkin, comprarPet, resgatarItem, marcarEntregue,
   enviarIdeia, avaliarIdeia, lancarProva,
   girarRoleta, meuIp, lerConfig, salvarConfig,
+  excluirIdeia, criarModelo, excluirModelo,
 } from "./logic/api.js";
 
 /* ============================================================
@@ -35,6 +36,10 @@ function nivelDe(totalXp) {
   while (xp >= reqFor(lvl) && lvl < 200) { xp -= reqFor(lvl); lvl++; }
   return { level: lvl, xp, req: reqFor(lvl) };
 }
+
+/* XP total acumulado necessário para ALCANÇAR um nível */
+function xpTotalParaNivel(l) { let t = 0; for (let i = 1; i < l; i++) t += reqFor(i); return t; }
+const PATENTES = [1, 5, 10, 15, 20, 25, 30];
 
 /* sequência 🔥: dias consecutivos com giro na roleta */
 function calcSequencia(eventos, pid) {
@@ -115,9 +120,9 @@ export default function App() {
   const dano = {};
   if (chefao) {
     colabs.forEach((c) => { dano[c.id] = 0; });
-    dados.conclusoes.forEach((cl) => {
-      if (cl.status === "aprovada" && cl.missoes?.chefao_id === chefao.id && dano[cl.colaborador_id] !== undefined) {
-        dano[cl.colaborador_id] = Math.min(cap, dano[cl.colaborador_id] + cl.missoes.xp);
+    dados.eventos.forEach((ev) => {
+      if (ev.origem === "missao" && ev.referencia_id === chefao.id && dano[ev.colaborador_id] !== undefined) {
+        dano[ev.colaborador_id] = Math.min(cap, dano[ev.colaborador_id] + ev.xp);
       }
     });
   }
@@ -180,6 +185,7 @@ export default function App() {
     ["mercado", "🛒", "Mercado"],
     ["ideias", "💡", "Ideias"],
     ...(gestor ? [["provas", "✎", "Provas"]] : []),
+    ...(gestor ? [["colinha", "🗒", "Colinha"]] : []),
     ["extrato", "📅", "Extrato"],
     ...(gestor ? [["equipe", "👥", "Equipe"]] : []),
     ["manual", "📖", "Manual"],
@@ -331,6 +337,7 @@ export default function App() {
                       +{fmt(m.xp)} XP · {m.tipo === "diaria" ? "Diária" : m.tipo === "fixa" ? "Fixa" : "Esporádica"}
                       {m.chefao_id && <span style={{ color: C.orange }}> · vinculada ao Chefão</span>}
                       {gestor && m.moedas_ocultas > 0 && <span style={{ color: C.gold }}> · 🤫 {fmt(m.moedas_ocultas)} moedas (oculto)</span>}
+                      {m.atribuida_a && <span style={{ color: C.blue }}> · → {(colabs.find((c) => c.id === m.atribuida_a) || {}).nome?.split(" ")[0] || "?"}</span>}
                     </div>
                   </div>
                   {st === "pendente" ? <Chip color={C.orange}>Aguardando gestor</Chip>
@@ -340,7 +347,10 @@ export default function App() {
                 </div>
               );
             })}
-            {gestor && <NovaMissao chefao={chefao} onCriar={(m) => agir(criarMissao(m), "Missão criada.")} />}
+            {gestor && <NovaMissao chefao={chefao} colabs={colabs} onCriar={async (m, salvarNaColinha) => {
+              if (salvarNaColinha) await criarModelo({ nome: m.nome, xp: m.xp, moedas_ocultas: m.moedas_ocultas, tipo: m.tipo, atribuida_a: m.atribuida_a });
+              agir(criarMissao(m), salvarNaColinha ? "Missão criada e salva na colinha." : "Missão criada.");
+            }} />}
           </div>
         )}
 
@@ -445,6 +455,25 @@ export default function App() {
                 <b style={{ color: C.violetHot }}>{fmt(saldo[p.id].mes)} XP</b>
               </div>
             ))}
+          </div>
+        )}
+
+        {view === "ranking" && (
+          <div style={{ marginTop: 14, ...cardStyle, maxWidth: 760 }}>
+            <b style={{ fontSize: 13, letterSpacing: 1, color: C.dim }}>🎖 A ESCADA — PATENTES E XP TOTAL</b>
+            {PATENTES.map((lv) => {
+              const alcancado = saldo[me.id].xp >= xpTotalParaNivel(lv);
+              const atual = nivel.level >= lv && (PATENTES[PATENTES.indexOf(lv) + 1] === undefined || nivel.level < PATENTES[PATENTES.indexOf(lv) + 1]);
+              return (
+                <div key={lv} style={{ display: "flex", alignItems: "center", gap: 12, padding: "9px 0", borderBottom: `1px solid ${C.border}55`, fontSize: 13, opacity: alcancado ? 1 : 0.65 }}>
+                  <span style={{ width: 24, textAlign: "center", fontSize: 16 }}>{alcancado ? "✅" : "🔒"}</span>
+                  <b style={{ flex: 1, color: atual ? C.violetHot : C.text }}>{titleFor(lv)}{atual && <span style={{ color: C.gold }}> ← você está aqui</span>}</b>
+                  <span style={{ color: C.dim }}>nível {lv}{lv === 30 ? "+" : ""}</span>
+                  <b style={{ color: C.blue, minWidth: 110, textAlign: "right" }}>{fmt(xpTotalParaNivel(lv))} XP total</b>
+                </div>
+              );
+            })}
+            <div style={{ fontSize: 11.5, color: C.dim2, marginTop: 8 }}>LEI 3: patente alcançada é sua para sempre. Cada nível a partir do 15 custa 10.000 XP.</div>
           </div>
         )}
 
@@ -600,6 +629,7 @@ export default function App() {
                       {p && <Avatar p={p} size={28} />}
                       <b style={{ fontSize: 13.5, flex: 1 }}>{i.titulo}</b>
                       {i.status === "avaliada" ? <Chip color={C.green}>Recompensada</Chip> : <Chip color={C.orange}>Em análise</Chip>}
+                      {gestor && <button onClick={() => { if (window.confirm("Excluir esta ideia do histórico? O XP já pago permanece no extrato.")) agir(excluirIdeia(i.id), "Ideia removida do histórico."); }} style={{ ...btnStyle(C.red, true), padding: "5px 10px", fontSize: 11 }}>🗑</button>}
                     </div>
                     <div style={{ fontSize: 12.5, color: C.dim, margin: "6px 0 0 38px" }}>{i.descricao}</div>
                     {gestor && i.status === "pendente" && (
@@ -636,6 +666,29 @@ export default function App() {
                 );
               })}
             </div>
+          </div>
+        )}
+
+        {/* ============ COLINHA (gestor) ============ */}
+        {view === "colinha" && gestor && (
+          <div style={{ marginTop: 16, display: "grid", gap: 12 }}>
+            <h2 style={{ margin: 0, fontSize: 20 }}>🗒 Colinha do Gestor</h2>
+            <p style={{ color: C.dim, fontSize: 13, margin: 0 }}>Modelos de missão com custo fixo: mesma função, mesmo esforço, mesmo XP — sempre. Clique em Publicar para lançar de novo sem pensar no valor. Só você vê esta aba.</p>
+            {dados.modelos.length === 0 && <div style={{ ...cardStyle, color: C.dim2, fontSize: 13 }}>Colinha vazia. Ao criar uma missão, marque "salvar na colinha" — ou cadastre direto abaixo.</div>}
+            {dados.modelos.map((md) => {
+              const destino = md.atribuida_a ? (colabs.find((c) => c.id === md.atribuida_a) || {}).nome?.split(" ")[0] || "?" : "Todos";
+              return (
+                <div key={md.id} style={{ ...cardStyle, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+                  <div style={{ flex: 1, minWidth: 200 }}>
+                    <b style={{ fontSize: 14 }}>{md.nome}</b>
+                    <div style={{ fontSize: 12, color: C.dim }}>+{fmt(md.xp)} XP{md.moedas_ocultas > 0 && <span style={{ color: C.gold }}> · 🤫 {fmt(md.moedas_ocultas)} moedas</span>} · {md.tipo} · <span style={{ color: C.blue }}>→ {destino}</span></div>
+                  </div>
+                  <button onClick={() => agir(criarMissao({ nome: md.nome, xp: md.xp, moedas_ocultas: md.moedas_ocultas, tipo: md.tipo, atribuida_a: md.atribuida_a, chefao_id: null }), `Missão '${md.nome}' publicada.`)} style={btnStyle(C.violetHot)}>▶ Publicar</button>
+                  <button onClick={() => { if (window.confirm("Excluir este modelo da colinha?")) agir(excluirModelo(md.id), "Modelo excluído."); }} style={{ ...btnStyle(C.red, true), padding: "7px 10px" }}>🗑</button>
+                </div>
+              );
+            })}
+            <NovoModelo colabs={colabs} onCriar={(m) => agir(criarModelo(m), "Modelo salvo na colinha.")} />
           </div>
         )}
 
@@ -727,16 +780,18 @@ function Tela({ msg, extra }) {
 }
 
 /* ---------- formulário: nova missão (gestor) ---------- */
-function NovaMissao({ chefao, onCriar }) {
+function NovaMissao({ chefao, colabs, onCriar }) {
   const [nome, setNome] = useState("");
   const [xp, setXp] = useState("200");
   const [moedas, setMoedas] = useState("");
   const [tipo, setTipo] = useState("fixa");
   const [vinculada, setVinculada] = useState(true);
+  const [destino, setDestino] = useState("");
+  const [colinha, setColinha] = useState(false);
   return (
     <div style={{ ...cardStyle, border: `1px dashed ${C.border2}` }}>
       <b style={{ fontSize: 13, letterSpacing: 1, color: C.dim }}>GESTOR — NOVA MISSÃO</b>
-      <div style={{ display: "grid", gridTemplateColumns: "2fr 80px 110px 1fr auto auto", gap: 10, marginTop: 10, alignItems: "center" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "2fr 80px 110px 1fr 1fr", gap: 10, marginTop: 10, alignItems: "center" }}>
         <input placeholder="Nome da missão" value={nome} onChange={(e) => setNome(e.target.value)} style={inputStyle} />
         <input placeholder="XP" value={xp} onChange={(e) => setXp(e.target.value.replace(/\D/g, ""))} style={inputStyle} />
         <input placeholder="Moedas 🤫" title="Oculto para a equipe" value={moedas} onChange={(e) => setMoedas(e.target.value.replace(/\D/g, ""))} style={inputStyle} />
@@ -745,15 +800,52 @@ function NovaMissao({ chefao, onCriar }) {
           <option value="diaria">Diária</option>
           <option value="esporadica">Esporádica</option>
         </select>
+        <select value={destino} onChange={(e) => setDestino(e.target.value)} style={inputStyle}>
+          <option value="">Para: Todos</option>
+          {colabs.filter((c) => !c.is_gestor).map((c) => <option key={c.id} value={c.id}>Para: {c.nome}</option>)}
+        </select>
+      </div>
+      <div style={{ display: "flex", gap: 16, marginTop: 10, alignItems: "center", flexWrap: "wrap" }}>
         <label style={{ fontSize: 12.5, color: C.dim, display: "flex", gap: 6, alignItems: "center" }}>
-          <input type="checkbox" checked={vinculada} disabled={!chefao} onChange={(e) => setVinculada(e.target.checked)} /> ☠ Chefão
+          <input type="checkbox" checked={vinculada} disabled={!chefao} onChange={(e) => setVinculada(e.target.checked)} /> ☠ Vincular ao Chefão
+        </label>
+        <label style={{ fontSize: 12.5, color: C.dim, display: "flex", gap: 6, alignItems: "center" }}>
+          <input type="checkbox" checked={colinha} onChange={(e) => setColinha(e.target.checked)} /> 🗒 Salvar na colinha
         </label>
         <button disabled={!nome || !xp} onClick={() => {
-          onCriar({ nome, xp: Number(xp), moedas_ocultas: Number(moedas) || 0, tipo, chefao_id: vinculada && chefao ? chefao.id : null });
-          setNome(""); setMoedas("");
-        }} style={{ ...btnStyle(C.violetHot), opacity: nome && xp ? 1 : 0.4 }}>Criar</button>
+          onCriar({ nome, xp: Number(xp), moedas_ocultas: Number(moedas) || 0, tipo, chefao_id: vinculada && chefao ? chefao.id : null, atribuida_a: destino || null }, colinha);
+          setNome(""); setMoedas(""); setColinha(false);
+        }} style={{ ...btnStyle(C.violetHot), opacity: nome && xp ? 1 : 0.4, marginLeft: "auto" }}>Criar</button>
       </div>
       {!chefao && <div style={{ fontSize: 11.5, color: C.dim2, marginTop: 8 }}>Sem chefão ativo — convoque um na aba Chefão para vincular missões ☠.</div>}
+    </div>
+  );
+}
+
+function NovoModelo({ colabs, onCriar }) {
+  const [nome, setNome] = useState("");
+  const [xp, setXp] = useState("10");
+  const [moedas, setMoedas] = useState("");
+  const [tipo, setTipo] = useState("fixa");
+  const [destino, setDestino] = useState("");
+  return (
+    <div style={{ ...cardStyle, border: `1px dashed ${C.border2}` }}>
+      <b style={{ fontSize: 13, letterSpacing: 1, color: C.dim }}>NOVO MODELO</b>
+      <div style={{ display: "grid", gridTemplateColumns: "2fr 80px 110px 1fr 1fr auto", gap: 10, marginTop: 10, alignItems: "center" }}>
+        <input placeholder="Nome (ex: Envio de relatório)" value={nome} onChange={(e) => setNome(e.target.value)} style={inputStyle} />
+        <input placeholder="XP" value={xp} onChange={(e) => setXp(e.target.value.replace(/\D/g, ""))} style={inputStyle} />
+        <input placeholder="Moedas 🤫" value={moedas} onChange={(e) => setMoedas(e.target.value.replace(/\D/g, ""))} style={inputStyle} />
+        <select value={tipo} onChange={(e) => setTipo(e.target.value)} style={inputStyle}>
+          <option value="fixa">Fixa</option>
+          <option value="diaria">Diária</option>
+          <option value="esporadica">Esporádica</option>
+        </select>
+        <select value={destino} onChange={(e) => setDestino(e.target.value)} style={inputStyle}>
+          <option value="">Para: Todos</option>
+          {colabs.filter((c) => !c.is_gestor).map((c) => <option key={c.id} value={c.id}>Para: {c.nome}</option>)}
+        </select>
+        <button disabled={!nome || !xp} onClick={() => { onCriar({ nome, xp: Number(xp), moedas_ocultas: Number(moedas) || 0, tipo, atribuida_a: destino || null }); setNome(""); setMoedas(""); }} style={{ ...btnStyle(C.violetHot), opacity: nome && xp ? 1 : 0.4 }}>Salvar</button>
+      </div>
     </div>
   );
 }
