@@ -176,21 +176,36 @@ export default function App() {
     }
   };
 
-  const NAV = [
+  /* Menu em dois blocos: GESTÃO (exclusivo do gestor) e JOGO (o que a equipe também vê) */
+  const NAV_GESTAO = gestor ? [
+    ["aprovacoes", "✔", `Aprovações${pendentes.length ? ` (${pendentes.length})` : ""}`],
+    ["missoes", "◎", "Missões"],
+    ["provas", "✎", "Provas"],
+    ["colinha", "🗒", "Colinha"],
+    ["equipe", "👥", "Equipe"],
+  ] : [];
+  const NAV_JOGO = [
     ["dashboard", "▦", "Dashboard"],
-    ...(gestor ? [["missoes", "◎", "Missões"]] : []),
-    ...(gestor ? [["aprovacoes", "✔", `Aprovações${pendentes.length ? ` (${pendentes.length})` : ""}`]] : []),
     ["chefao", "☠", "Chefão"],
     ["ranking", "♛", "Ranking"],
     ["loja", "🛍", "Loja"],
     ["mercado", "🛒", "Mercado"],
     ["ideias", "💡", "Ideias"],
-    ...(gestor ? [["provas", "✎", "Provas"]] : []),
-    ...(gestor ? [["colinha", "🗒", "Colinha"]] : []),
     ["extrato", "📅", "Extrato"],
-    ...(gestor ? [["equipe", "👥", "Equipe"]] : []),
     ["manual", "📖", "Manual"],
   ];
+  const navBtn = ([id, ic, label], cor) => (
+    <button key={id} onClick={() => setView(id)} style={{
+      display: "flex", alignItems: "center", gap: 11, padding: "10px 12px", borderRadius: 10,
+      background: view === id ? `linear-gradient(90deg, ${cor}33, transparent)` : "transparent",
+      border: view === id ? `1px solid ${cor}66` : "1px solid transparent",
+      color: view === id ? C.text : C.dim, fontSize: 13.5, fontWeight: 600, cursor: "pointer", textAlign: "left", width: "100%",
+    }}>
+      <span style={{ width: 18, textAlign: "center" }}>{ic}</span>{label}
+    </button>
+  );
+  /* rótulo para o gestor: apelido escolhido + nome real, sem alterar nada no banco */
+  const rotulo = (p) => (gestor && p.nick ? `${p.nick} (${p.name.split(" ")[0]})` : (p.nick || p.name));
 
   return (
     <div style={{ minHeight: "100vh", background: `radial-gradient(1200px 600px at 70% -10%, #1a1040 0%, ${C.bg} 55%)`, color: C.text, fontFamily: "'Segoe UI', system-ui, sans-serif", display: "flex" }}>
@@ -203,16 +218,15 @@ export default function App() {
             <div style={{ color: C.blue, fontSize: 10, fontWeight: 700, letterSpacing: 2 }}>ONLINE</div>
           </div>
         </div>
-        {NAV.map(([id, ic, label]) => (
-          <button key={id} onClick={() => setView(id)} style={{
-            display: "flex", alignItems: "center", gap: 11, padding: "10px 12px", borderRadius: 10,
-            background: view === id ? `linear-gradient(90deg, ${C.violetDeep}44, transparent)` : "transparent",
-            border: view === id ? `1px solid ${C.violet}55` : "1px solid transparent",
-            color: view === id ? C.text : C.dim, fontSize: 13.5, fontWeight: 600, cursor: "pointer", textAlign: "left",
-          }}>
-            <span style={{ width: 18, textAlign: "center" }}>{ic}</span>{label}
-          </button>
-        ))}
+        {gestor && (
+          <>
+            <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: 2, color: C.gold, padding: "2px 12px 6px" }}>🛠 GESTÃO — SÓ VOCÊ</div>
+            {NAV_GESTAO.map((item) => navBtn(item, C.gold))}
+            <div style={{ borderTop: `1px solid ${C.border}`, margin: "10px 4px" }} />
+            <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: 2, color: C.dim, padding: "2px 12px 6px" }}>🎮 JOGO — TODOS VEEM</div>
+          </>
+        )}
+        {NAV_JOGO.map((item) => navBtn(item, C.violetHot))}
         <div style={{ marginTop: "auto", borderTop: `1px solid ${C.border}`, paddingTop: 14 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "0 6px 10px" }}>
             <Avatar p={me} size={36} ring={gestor ? C.gold : undefined} />
@@ -346,7 +360,7 @@ export default function App() {
                 <div key={cl.id} style={{ ...cardStyle, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
                   <Avatar p={p} size={36} />
                   <div style={{ flex: 1, minWidth: 200 }}>
-                    <b style={{ fontSize: 13.5 }}>{p.nick || p.name}</b> <span style={{ color: C.dim, fontSize: 13 }}>diz que concluiu</span>
+                    <b style={{ fontSize: 13.5 }}>{p.nick ? `${p.nick} (${p.name})` : p.name}</b> <span style={{ color: C.dim, fontSize: 13 }}>diz que concluiu</span>
                     <div style={{ fontSize: 13 }}>{cl.missoes?.chefao_id ? "☠ " : ""}{cl.missoes?.nome} <span style={{ color: C.dim }}>· +{fmt(cl.missoes?.xp || 0)} XP{cl.missoes?.moedas_ocultas ? ` · 🤫 ${fmt(cl.missoes.moedas_ocultas)} moedas` : ""}</span></div>
                     <div style={{ fontSize: 11, color: C.dim2 }}>{ago(new Date(cl.enviada_em).getTime())}</div>
                   </div>
@@ -406,7 +420,7 @@ export default function App() {
                     <div key={p.id} style={cardStyle}>
                       <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 8 }}>
                         <Avatar p={p} size={36} />
-                        <div><b style={{ fontSize: 13 }}>{p.nick || p.name.split(" ")[0]}</b><div style={{ fontSize: 11, color: c >= cap ? C.green : C.dim }}>{c >= cap ? "Meta batida! ⚔️" : "Em combate"}</div></div>
+                        <div><b style={{ fontSize: 13 }}>{rotulo(p)}</b><div style={{ fontSize: 11, color: c >= cap ? C.green : C.dim }}>{c >= cap ? "Meta batida! ⚔️" : "Em combate"}</div></div>
                       </div>
                       <Bar value={c} max={cap} color={c >= cap ? C.green : C.violetHot} />
                       <div style={{ fontSize: 11.5, color: C.dim, marginTop: 4, textAlign: "right" }}>{fmt(c)} / {fmt(cap)} XP de dano</div>
@@ -428,7 +442,7 @@ export default function App() {
                 <div style={{ fontSize: 22, width: 34, textAlign: "center" }}>{["🥇", "🥈", "🥉"][i] || `${i + 1}º`}</div>
                 <Avatar p={p} size={40} />
                 <div style={{ flex: 1 }}>
-                  <b>{p.nick || p.name}</b>
+                  <b>{p.nick || p.name}</b>{gestor && p.nick && <span style={{ color: C.dim, fontWeight: 400, fontSize: 13 }}> — {p.name}</span>}
                   <div style={{ fontSize: 12, color: C.dim }}>Nível {nivelDe(saldo[p.id].xp).level} · {titleFor(nivelDe(saldo[p.id].xp).level)}</div>
                 </div>
                 <b style={{ color: C.violetHot }}>{fmt(saldo[p.id].mes)} XP</b>
@@ -465,7 +479,7 @@ export default function App() {
               return (
                 <div key={ev.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 0", borderBottom: `1px solid ${C.border}55`, fontSize: 12.5 }}>
                   <Avatar p={p} size={28} />
-                  <span style={{ flex: 1 }}><b style={{ color: C.blue }}>{p.nick || p.name.split(" ")[0]}</b> {ev.descricao || ev.origem}</span>
+                  <span style={{ flex: 1 }}><b style={{ color: C.blue }}>{rotulo(p)}</b> {ev.descricao || ev.origem}</span>
                   {ev.xp !== 0 && <b style={{ color: ev.xp > 0 ? C.green : C.red }}>{ev.xp > 0 ? "+" : ""}{fmt(ev.xp)} XP</b>}
                   <span style={{ color: C.dim2, fontSize: 11 }}>{ago(new Date(ev.criado_em).getTime())}</span>
                 </div>
@@ -849,6 +863,7 @@ function NovoModelo({ colabs, onCriar }) {
 
 /* ---------- ficha administrativa de colaborador (gestor) ---------- */
 function FichaColab({ p, saldo, onSalvar, onAjuste }) {
+  const [nome, setNome] = useState(p.nome || "");
   const [funcao, setFuncao] = useState(p.funcao || "");
   const [turno, setTurno] = useState(String(p.turno).slice(0, 5));
   const [xp, setXp] = useState("");
@@ -864,9 +879,10 @@ function FichaColab({ p, saldo, onSalvar, onAjuste }) {
           <b>{p.nome}</b> {p.is_gestor && <Chip color={C.gold}>Gestor</Chip>}
           <div style={{ fontSize: 12, color: C.dim }}>Nível {info.level} · {fmt(saldo.xp)} XP total · {fmt(saldo.moedas)} moedas</div>
         </div>
-        <input value={funcao} onChange={(e) => setFuncao(e.target.value)} placeholder="Função" style={{ ...inputStyle, width: 170 }} />
+        <input value={nome} onChange={(e) => setNome(e.target.value)} placeholder="Nome real" style={{ ...inputStyle, width: 180 }} />
+        <input value={funcao} onChange={(e) => setFuncao(e.target.value)} placeholder="Função" style={{ ...inputStyle, width: 150 }} />
         <input value={turno} onChange={(e) => setTurno(e.target.value)} placeholder="Turno HH:MM" style={{ ...inputStyle, width: 110 }} />
-        <button onClick={() => onSalvar({ funcao, turno })} style={{ ...btnStyle(C.violetHot, true), padding: "8px 14px", fontSize: 12 }}>Salvar ficha</button>
+        <button onClick={() => onSalvar({ nome, funcao, turno })} style={{ ...btnStyle(C.violetHot, true), padding: "8px 14px", fontSize: 12 }}>Salvar ficha</button>
       </div>
       <div style={{ display: "flex", gap: 10, marginTop: 12, flexWrap: "wrap", alignItems: "center" }}>
         <input placeholder="± XP" value={xp} onChange={(e) => setXp(e.target.value.replace(/[^0-9-]/g, ""))} style={{ ...inputStyle, width: 100 }} />
