@@ -164,3 +164,22 @@ export async function lancarProva(colaboradorId, nomeProva, nota, xpPorPonto) {
   });
   return error?.message || null;
 }
+
+/* ---------- roleta da pontualidade (horário do servidor) ---------- */
+export async function girarRoleta() {
+  const { data, error } = await supabase.rpc("girar_roleta");
+  if (error) return { status: "erro", msg: error.message };
+  return data;
+}
+export async function meuIp() {
+  const { data, error } = await supabase.rpc("meu_ip");
+  return error ? null : data;
+}
+export async function lerConfig(chave) {
+  const { data } = await supabase.from("config").select("valor").eq("chave", chave).maybeSingle();
+  return data?.valor || "";
+}
+export async function salvarConfig(chave, valor) {
+  const { error } = await supabase.from("config").upsert({ chave, valor });
+  return error?.message || null;
+}

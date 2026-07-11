@@ -11,6 +11,7 @@ import {
   convocarChefao, mudarStatusChefao, excluirChefao, lancarAjuste,
   trocarSenha, comprarSkin, comprarPet, resgatarItem, marcarEntregue,
   enviarIdeia, avaliarIdeia, lancarProva,
+  girarRoleta, meuIp, lerConfig, salvarConfig,
 } from "./logic/api.js";
 
 /* ============================================================
@@ -35,6 +36,16 @@ function nivelDe(totalXp) {
   return { level: lvl, xp, req: reqFor(lvl) };
 }
 
+/* sequência 🔥: dias consecutivos com giro na roleta */
+function calcSequencia(eventos, pid) {
+  const dias = new Set(eventos.filter((e) => e.colaborador_id === pid && e.origem === "roleta").map((e) => new Date(e.criado_em).toDateString()));
+  let seq = 0;
+  const d = new Date();
+  if (!dias.has(d.toDateString())) d.setDate(d.getDate() - 1);
+  while (dias.has(d.toDateString())) { seq++; d.setDate(d.getDate() - 1); }
+  return seq;
+}
+
 const dataBr = (iso) => new Date(iso).toLocaleDateString("pt-BR", { day: "2-digit", month: "long", year: "numeric" });
 
 export default function App() {
@@ -49,6 +60,7 @@ export default function App() {
   const [extratoDe, setExtratoDe] = useState(null);
   const [lojaTab, setLojaTab] = useState("SKINS");
   const [senhaModal, setSenhaModal] = useState(false);
+  const [wheel, setWheel] = useState(null);
   const [novaSenha, setNovaSenha] = useState("");
 
   useEffect(() => { aoMudarSessao(setSessao); }, []);
@@ -114,9 +126,13 @@ export default function App() {
   const prazoEstourado = chefao && chefao.status === "ativo" && Date.now() > new Date(chefao.prazo).getTime() && hpAtual > 0;
 
   const minhasConclusoes = dados.conclusoes.filter((cl) => cl.colaborador_id === me.id);
+  const hojeStr = new Date().toDateString();
   const statusMissao = (m) => {
-    const cl = minhasConclusoes.find((x) => x.missao_id === m.id && x.status !== "reprovada");
-    return cl ? cl.status : null; /* null = disponível */
+    const cl = minhasConclusoes.find((x) =>
+      x.missao_id === m.id && x.status !== "reprovada" &&
+      (m.tipo === "esporadica" || new Date(x.enviada_em).toDateString() === hojeStr)
+    );
+    return cl ? cl.status : null; /* null = disponível (fixa/diária renovam à meia-noite) */
   };
   const pendentes = dados.conclusoes.filter((cl) => cl.status === "pendente");
 
@@ -134,6 +150,24 @@ export default function App() {
     }
     await agir(avaliarConclusao(cl, sim), sim ? "Aprovada — prêmio lançado no extrato." : "Reprovada. A missão volta a ficar disponível.");
     if (luta) setBattle(luta);
+  };
+
+  const girar = async () => {
+    const r = await girarRoleta();
+    if (r.status === "ok") {
+      setWheel({ spinning: true, rotulo: r.rotulo });
+      setTimeout(() => { setWheel((w) => w && { ...w, spinning: false }); recarregar(); }, 2600);
+    } else {
+      const msgs = {
+        ja_girou: "Você já girou a roleta hoje. Amanhã tem mais.",
+        cedo: `A roleta abre às ${r.abre || "seu turno"} em ponto e fecha 5 minutos depois.`,
+        atrasado: "Janela perdida: -20 XP e sequência zerada. Amanhã é revanche.",
+        ip_bloqueado: "A roleta só gira na rede da empresa.",
+        sem_ficha: "Sua ficha de colaborador não foi encontrada.",
+      };
+      notify(msgs[r.status] || r.msg || "Não foi possível girar.", r.status === "atrasado" ? C.red : C.orange);
+      if (r.status === "atrasado") recarregar();
+    }
   };
 
   const NAV = [
@@ -225,6 +259,10 @@ export default function App() {
             <span style={{ fontSize: 22 }}>🏆</span>
             <div><div style={{ fontSize: 10, color: C.dim, letterSpacing: 1 }}>RANKING</div><div style={{ fontWeight: 800, fontSize: 17 }}>{myRank}º</div></div>
           </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={{ fontSize: 20 }}>🔥</span>
+            <div><div style={{ fontSize: 10, color: C.dim, letterSpacing: 1 }}>SEQUÊNCIA</div><div style={{ fontWeight: 800, fontSize: 17, color: C.orange }}>{calcSequencia(dados.eventos, me.id)} dias</div></div>
+          </div>
           <div style={{ marginLeft: "auto", textAlign: "right" }}>
             <div style={{ fontSize: 11, color: C.dim }}>XP no mês</div>
             <div style={{ fontWeight: 900, fontSize: 19, color: C.violetHot }}>{fmt(saldo[me.id].mes)}</div>
@@ -238,6 +276,8 @@ export default function App() {
               <HeroFigure p={me} height={300} />
               <div style={{ marginTop: 10, fontWeight: 800, color: C.violetHot }}>{titleFor(nivel.level).toUpperCase()}</div>
               <div style={{ fontSize: 12, color: C.dim, marginTop: 4 }}>{me.funcao} · Região {me.regiao} · Turno {String(me.turno).slice(0, 5)}</div>
+              <button onClick={girar} style={{ ...btnStyle(C.violetHot), marginTop: 12 }}>🎰 Roleta da Pontualidade</button>
+              <div style={{ fontSize: 11, color: C.dim2, marginTop: 6 }}>Abre às {String(me.turno).slice(0, 5)} e fecha 5 min depois — pelo relógio do servidor.</div>
             </section>
             <section style={{ display: "grid", gap: 16, alignContent: "start" }}>
               <div style={cardStyle}>
@@ -447,6 +487,7 @@ export default function App() {
             <div style={{ ...cardStyle, fontSize: 13, color: C.dim }}>
               Para ADICIONAR alguém: Supabase → Authentication → Add user (e-mail + senha). A ficha nasce sozinha aqui. Depois ajuste função e turno abaixo.
             </div>
+            <TravaRoleta notify={notify} />
             {colabs.map((p) => (
               <FichaColab key={p.id} p={p} saldo={saldo[p.id]}
                 onSalvar={(campos) => agir(salvarPerfil(p.id, campos), "Ficha atualizada.")}
@@ -628,6 +669,29 @@ export default function App() {
           player={jogador} onDone={() => setBattle(null)} />;
       })()}
 
+      {/* roleta */}
+      {wheel && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 96, background: "rgba(4,6,14,.9)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <div style={{ ...cardStyle, width: 340, textAlign: "center" }}>
+            <b style={{ fontSize: 15, letterSpacing: 1 }}>🎰 ROLETA DA PONTUALIDADE</b>
+            <div style={{ display: "flex", justifyContent: "center", margin: "18px 0" }}>
+              <div className={wheel.spinning ? "wheel-spin" : ""} style={{ width: 170, height: 170, borderRadius: "50%", border: `6px solid ${C.gold}`, background: `conic-gradient(${C.violetDeep} 0 60deg, #1c2942 60deg 120deg, ${C.violetDeep} 120deg 180deg, #1c2942 180deg 240deg, ${C.violetDeep} 240deg 300deg, #1c2942 300deg 360deg)`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 42 }}>
+                {wheel.spinning ? "🎲" : "🎉"}
+              </div>
+            </div>
+            {wheel.spinning ? (
+              <div style={{ color: C.dim, fontSize: 13 }}>O servidor está sorteando…</div>
+            ) : (
+              <>
+                <div className="banner-pop" style={{ fontSize: 24, fontWeight: 900, color: C.gold }}>{wheel.rotulo}!</div>
+                <div style={{ color: C.dim, fontSize: 12.5, margin: "6px 0 12px" }}>Pontualidade paga. Já está no seu extrato.</div>
+                <button onClick={() => setWheel(null)} style={btnStyle(C.violetHot)}>Fechar</button>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* modal trocar senha */}
       {senhaModal && (
         <div style={{ position: "fixed", inset: 0, zIndex: 95, background: "rgba(4,6,14,.85)", display: "flex", alignItems: "center", justifyContent: "center" }} onClick={() => setSenhaModal(false)}>
@@ -764,6 +828,28 @@ function FormProva({ colabs, onLancar }) {
         <input placeholder="Nota 0-100" value={nota} onChange={(e) => setNota(e.target.value.replace(/\D/g, ""))} style={inputStyle} />
         <input placeholder="XP/ponto" value={xpp} onChange={(e) => setXpp(e.target.value.replace(/\D/g, ""))} style={inputStyle} />
         <button disabled={!nota || !nome} onClick={() => { onLancar(pid, nome, n, x); setNota(""); setNome(""); }} style={{ ...btnStyle(C.violetHot), opacity: nota && nome ? 1 : 0.4 }}>Lançar</button>
+      </div>
+    </div>
+  );
+}
+
+
+/* ---------- trava de IP da roleta (gestor) ---------- */
+function TravaRoleta({ notify }) {
+  const [ip, setIp] = useState("");
+  const [carregado, setCarregado] = useState(false);
+  useEffect(() => { lerConfig("ip_roleta").then((v) => { setIp(v); setCarregado(true); }); }, []);
+  if (!carregado) return null;
+  return (
+    <div style={{ ...cardStyle, border: `1px dashed ${C.border2}` }}>
+      <b style={{ fontSize: 13, letterSpacing: 1, color: C.dim }}>🔒 TRAVA DA ROLETA POR IP</b>
+      <p style={{ fontSize: 12.5, color: C.dim, margin: "8px 0 10px" }}>
+        Com um IP cadastrado, a roleta SÓ gira em aparelhos conectados à rede da empresa — julgado pelo servidor, impossível de burlar pelo celular. Vazio = liberada em qualquer lugar.
+      </p>
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+        <input placeholder="IP autorizado (ex: 200.10.20.30)" value={ip} onChange={(e) => setIp(e.target.value.trim())} style={{ ...inputStyle, width: 220 }} />
+        <button onClick={async () => { const v = await meuIp(); if (v && v !== "desconhecido") { setIp(v); notify(`IP deste aparelho: ${v}. Clique em Salvar para travar.`); } else notify("Não consegui detectar o IP.", C.orange); }} style={{ ...btnStyle(C.violetHot, true), padding: "8px 14px", fontSize: 12 }}>Usar IP deste aparelho</button>
+        <button onClick={async () => { const e = await salvarConfig("ip_roleta", ip); notify(e || (ip ? "Trava ativada para este IP." : "Trava removida — roleta liberada em qualquer rede."), e ? C.red : C.green); }} style={{ ...btnStyle(C.gold, true), padding: "8px 14px", fontSize: 12 }}>Salvar</button>
       </div>
     </div>
   );
