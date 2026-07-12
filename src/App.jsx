@@ -28,7 +28,7 @@ const HAIRS = ["#141420", "#241a12", "#101018", "#2b1a10", "#15161e", "#1c1410",
 function hashId(id) { let h = 0; for (const ch of String(id)) h = (h * 31 + ch.charCodeAt(0)) >>> 0; return h; }
 function decorar(colab) {
   const h = hashId(colab.id);
-  return { ...colab, name: colab.nome, nick: colab.apelido, tone: TONES[h % TONES.length], hair: HAIRS[(h >> 3) % HAIRS.length], skin: colab.skin || "elite", skins_possuidas: colab.skins_possuidas || ["elite"], pets_possuidos: colab.pets_possuidos || [] };
+  return { ...colab, name: colab.nome, nick: colab.apelido, tone: TONES[h % TONES.length], hair: HAIRS[(h >> 3) % HAIRS.length], skin: colab.skin || "elite", skins_possuidas: colab.skins_possuidas || ["elite"], pets_possuidos: colab.pets_possuidos || [], corpo: colab.corpo || "m" };
 }
 
 /* Nível calculado a partir do XP total do ledger */
@@ -36,6 +36,20 @@ function nivelDe(totalXp) {
   let xp = Math.max(0, totalXp), lvl = 1;
   while (xp >= reqFor(lvl) && lvl < 200) { xp -= reqFor(lvl); lvl++; }
   return { level: lvl, xp, req: reqFor(lvl) };
+}
+
+/* Arte real do herói: /assets/heroi-{categoria}-{corpo}.png — plano B: boneco SVG */
+function HeroArt({ p, pat, height }) {
+  const [erro, setErro] = useState(false);
+  const slug = pat.categoria.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, "");
+  const src = `/assets/heroi-${slug}-${p.corpo || "m"}.png`;
+  if (erro) return <HeroFigure p={p} height={height} />;
+  return (
+    <img key={src} src={src} alt={pat.titulo} onError={() => setErro(true)}
+      style={{ height, display: "block", borderRadius: 18,
+        WebkitMaskImage: "radial-gradient(115% 102% at 50% 50%, #000 60%, transparent 99%)",
+        maskImage: "radial-gradient(115% 102% at 50% 50%, #000 60%, transparent 99%)" }} />
+  );
 }
 
 /* XP total acumulado necessário para ALCANÇAR um nível */
@@ -305,7 +319,7 @@ export default function App() {
             <div className="grade" />
             <div style={{ position: "relative", textAlign: "center", padding: 20 }}>
               <div className="aura" style={{ position: "relative", display: "inline-block" }}>
-                <HeroFigure p={me} height={400} />
+                <HeroArt p={me} pat={pat} height={430} />
                 {me.pet && <div className="pet-float" style={{ position: "absolute", bottom: 24, right: -46, fontSize: 52 }}>{(PETS.find((x) => x.id === me.pet) || {}).icon}</div>}
               </div>
               <div style={{ marginTop: 16, fontWeight: 900, fontSize: 24, letterSpacing: 4, color: pat.cor, textShadow: `0 0 28px ${pat.cor}99` }}>
@@ -314,6 +328,13 @@ export default function App() {
               <div style={{ marginTop: 4, fontSize: 12, fontWeight: 700, letterSpacing: 2, color: C.dim }}>{pat.icone} CATEGORIA {pat.categoria.toUpperCase()}</div>
               <button onClick={girar} style={{ ...btnStyle(C.violetHot), marginTop: 18, padding: "11px 26px" }}>🎰 Roleta da Pontualidade</button>
               <div style={{ fontSize: 11, color: C.dim2, marginTop: 8 }}>Abre às {String(me.turno).slice(0, 5)} e fecha 5 min depois — pelo relógio do servidor.</div>
+              <div style={{ marginTop: 12, display: "flex", gap: 8, justifyContent: "center", alignItems: "center", fontSize: 11.5, color: C.dim }}>
+                Personagem:
+                {[["m", "Masculino"], ["f", "Feminino"]].map(([v, l]) => (
+                  <button key={v} onClick={() => me.corpo !== v && agir(salvarPerfil(me.id, { corpo: v }), "Personagem atualizado.")}
+                    style={{ ...btnStyle(C.violetHot, me.corpo !== v), padding: "4px 12px", fontSize: 11 }}>{l}</button>
+                ))}
+              </div>
             </div>
           </div>
         )}
