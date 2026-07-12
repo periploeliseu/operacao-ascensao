@@ -35,3 +35,17 @@ body { margin: 0; background: #070b16; }
   background-size: 48px 48px;
   -webkit-mask-image: radial-gradient(640px 440px at 50% 62%, #000, transparent);
   mask-image: radial-gradient(640px 440px at 50% 62%, #000, transparent) }
+
+/* ---- tela-título cinematográfica ---- */
+@keyframes zoomLento { 0%, 100% { transform: scale(1) } 50% { transform: scale(1.05) } }
+.zoom-lento { animation: zoomLento 36s ease-in-out infinite }
+@keyframes pulsar { 0%, 100% { opacity: .15 } 50% { opacity: .95 } }
+.brilho { position: absolute; transform: translate(-50%, -50%); border-radius: 50%; mix-blend-mode: screen; pointer-events: none; animation: pulsar 4s ease-in-out infinite }
+@keyframes deriva { from { transform: translateX(-5%) } to { transform: translateX(5%) } }
+.fumaca { position: absolute; inset: -15%; pointer-events: none; opacity: .16; animation: deriva 26s ease-in-out infinite alternate }
+.f1 { background: radial-gradient(60% 40% at 30% 80%, #a78bfa44 0%, transparent 70%) }
+.f2 { background: radial-gradient(55% 35% at 75% 75%, #60a5fa33 0%, transparent 70%); animation-duration: 34s; animation-direction: alternate-reverse }
+@keyframes subirBrasa { 0% { transform: translateY(0); opacity: 0 } 8% { opacity: .75 } 60% { opacity: .45 } 100% { transform: translateY(-88vh) translateX(26px); opacity: 0 } }
+.brasa { position: absolute; bottom: -8px; width: 3px; height: 3px; border-radius: 50%; background: #c084fc; filter: blur(.4px); pointer-events: none; animation: subirBrasa 10s linear infinite; z-index: 2 }
+@keyframes tremular { 0%, 93.5%, 100% { opacity: 0 } 94% { opacity: .1 } 94.6% { opacity: 0 } 95.4% { opacity: .07 } 96% { opacity: 0 } }
+.tremula { position: fixed; inset: 0; background: #b18cff; mix-blend-mode: overlay; pointer-events: none; z-index: 3; opacity: 0; animation: tremular 12s linear infinite }
