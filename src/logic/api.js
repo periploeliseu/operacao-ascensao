@@ -25,7 +25,7 @@ function traduzErro(msg) {
 
 /* ---------- carga geral ---------- */
 export async function carregarTudo() {
-  const [c, m, ch, ev, cl, id, rg, md] = await Promise.all([
+  const [c, m, ch, ev, cl, id, rg, md, pc, pr] = await Promise.all([
     supabase.from("colaboradores").select("*").order("nome"),
     supabase.from("missoes").select("*").eq("ativa", true).order("criado_em"),
     supabase.from("chefoes").select("*").neq("status", "arquivado").order("criado_em", { ascending: false }).limit(1),
@@ -34,10 +34,12 @@ export async function carregarTudo() {
     supabase.from("ideias").select("*").order("criado_em", { ascending: false }).limit(200),
     supabase.from("resgates").select("*").order("criado_em", { ascending: false }).limit(200),
     supabase.from("modelos_missao").select("*").order("nome"),
+    supabase.from("premios_categoria").select("*").order("categoria"),
+    supabase.from("premios_resgatados").select("*").order("resgatado_em", { ascending: false }),
   ]);
   const erro = c.error || m.error || ch.error || ev.error || cl.error;
   if (erro) throw erro;
-  return { colabs: c.data, missoes: m.data, chefao: ch.data[0] || null, eventos: ev.data, conclusoes: cl.data, ideias: id.data || [], resgates: rg.data || [], modelos: md.data || [] };
+  return { colabs: c.data, missoes: m.data, chefao: ch.data[0] || null, eventos: ev.data, conclusoes: cl.data, ideias: id.data || [], resgates: rg.data || [], modelos: md.data || [], premios: pc.data || [], premiosResgatados: pr.data || [] };
 }
 
 /* ---------- colaborador ---------- */
@@ -198,5 +200,20 @@ export async function criarModelo(m) {
 }
 export async function excluirModelo(id) {
   const { error } = await supabase.from("modelos_missao").delete().eq("id", id);
+  return error?.message || null;
+}
+
+/* ---------- prêmios por categoria ---------- */
+export async function resgatarPremio(categoria) {
+  const { data, error } = await supabase.rpc("resgatar_premio", { cat: categoria });
+  if (error) return { status: "erro", msg: error.message };
+  return data;
+}
+export async function salvarPremioCategoria(categoria, descricao) {
+  const { error } = await supabase.from("premios_categoria").update({ descricao }).eq("categoria", categoria);
+  return error?.message || null;
+}
+export async function entregarPremio(id) {
+  const { error } = await supabase.from("premios_resgatados").update({ entregue: true }).eq("id", id);
   return error?.message || null;
 }

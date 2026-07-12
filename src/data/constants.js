@@ -55,7 +55,7 @@ const CATEGORIAS = [
   { nome: "Super Raro",    icone: "🟠", cor: "#fb923c", patentes: ["Marechal", "Titã", "Soberano", "General", "Imperador"] },
   { nome: "Épico",         icone: "🔴", cor: "#f8717a", patentes: ["Lenda", "Campeão Supremo", "Guardião Supremo", "Conquistador", "Herói da Ascensão"] },
   { nome: "Mítico",        icone: "🟡", cor: "#fbbf24", patentes: ["Arconte", "Ascendente", "Dominador", "Arquiteto Supremo", "Supremo Executor"] },
-  { nome: "Lendário",      icone: "🌈", cor: "#f0abfc", patentes: ["Avatar da Logística", "Senhor da Operação", "Mestre Absoluto", "Lenda Viva", "Escolhido da Ascensão"] },
+  { nome: "Lendário",      icone: "💎", cor: "#f0abfc", patentes: ["Avatar da Logística", "Senhor da Operação", "Mestre Absoluto", "Lenda Viva", "Escolhido da Ascensão"] },
   { nome: "Transcendente", icone: "👑", cor: "#e6c463", patentes: ["Semideus", "Primordial", "Ancião Supremo", "Entidade Suprema", "Avatar Supremo"] },
   { nome: "Deus",          icone: "⚡", cor: "#7dd3fc", patentes: ["Deus da Logística", "Deus da Precisão", "Deus da Operação", "Deus da Ascensão", "Criador da Ordem"] },
 ];

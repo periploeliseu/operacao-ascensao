@@ -13,6 +13,7 @@ import {
   enviarIdeia, avaliarIdeia, lancarProva,
   girarRoleta, meuIp, lerConfig, salvarConfig,
   excluirIdeia, criarModelo, excluirModelo,
+  resgatarPremio, salvarPremioCategoria, entregarPremio,
 } from "./logic/api.js";
 
 /* ============================================================
@@ -65,6 +66,8 @@ export default function App() {
   const [lojaTab, setLojaTab] = useState("SKINS");
   const [senhaModal, setSenhaModal] = useState(false);
   const [wheel, setWheel] = useState(null);
+  const [secoes, setSecoes] = useState({ lista: true, escada: false, feed: false });
+  const [catAberta, setCatAberta] = useState(null); /* null = abre a categoria atual */
   const [novaSenha, setNovaSenha] = useState("");
 
   useEffect(() => { aoMudarSessao(setSessao); }, []);
@@ -331,7 +334,7 @@ export default function App() {
                       +{fmt(m.xp)} XP · {m.tipo === "diaria" ? "Diária" : m.tipo === "fixa" ? "Fixa" : "Esporádica"}
                       {m.chefao_id && <span style={{ color: C.orange }}> · vinculada ao Chefão</span>}
                       {gestor && m.moedas_ocultas > 0 && <span style={{ color: C.gold }}> · 🤫 {fmt(m.moedas_ocultas)} moedas (oculto)</span>}
-                      {m.atribuida_a && <span style={{ color: C.blue }}> · → {(colabs.find((c) => c.id === m.atribuida_a) || {}).nome?.split(" ")[0] || "?"}</span>}
+                      {m.atribuidos && m.atribuidos.length > 0 && <span style={{ color: C.blue }}> · → {m.atribuidos.map((id) => (colabs.find((c) => c.id === id) || {}).nome?.split(" ")[0] || "?").join(", ")}</span>}
                     </div>
                   </div>
                   {st === "pendente" ? <Chip color={C.orange}>Aguardando gestor</Chip>
@@ -342,7 +345,7 @@ export default function App() {
               );
             })}
             {gestor && <NovaMissao chefao={chefao} colabs={colabs} onCriar={async (m, salvarNaColinha) => {
-              if (salvarNaColinha) await criarModelo({ nome: m.nome, xp: m.xp, moedas_ocultas: m.moedas_ocultas, tipo: m.tipo, atribuida_a: m.atribuida_a });
+              if (salvarNaColinha) await criarModelo({ nome: m.nome, xp: m.xp, moedas_ocultas: m.moedas_ocultas, tipo: m.tipo, atribuidos: m.atribuidos });
               agir(criarMissao(m), salvarNaColinha ? "Missão criada e salva na colinha." : "Missão criada.");
             }} />}
           </div>
@@ -435,68 +438,126 @@ export default function App() {
         )}
 
         {/* ============ RANKING ============ */}
-        {view === "ranking" && (
-          <div style={{ marginTop: 16, display: "grid", gap: 14 }}>
-            <h2 style={{ margin: 0, fontSize: 20 }}>Ranking do Mês — XP farmado</h2>
-            {ranked.map((p, i) => (
-              <div key={p.id} style={{ ...cardStyle, display: "flex", alignItems: "center", gap: 14, border: i === 0 ? `1.5px solid ${C.gold}` : `1px solid ${C.border}` }}>
-                <div style={{ fontSize: 22, width: 34, textAlign: "center" }}>{["🥇", "🥈", "🥉"][i] || `${i + 1}º`}</div>
-                <Avatar p={p} size={40} />
-                <div style={{ flex: 1 }}>
-                  <b>{p.nick || p.name}</b>{gestor && p.nick && <span style={{ color: C.dim, fontWeight: 400, fontSize: 13 }}> — {p.name}</span>}
-                  <div style={{ fontSize: 12, color: C.dim }}>Nível {nivelDe(saldo[p.id].xp).level} · {titleFor(nivelDe(saldo[p.id].xp).level)}</div>
-                </div>
-                <b style={{ color: C.violetHot }}>{fmt(saldo[p.id].mes)} XP</b>
-              </div>
-            ))}
-          </div>
-        )}
+        {/* ============ RANKING (seções recolhíveis) ============ */}
+        {view === "ranking" && (() => {
+          const catAtual = Math.floor(Math.min(44, nivel.level - 1) / 5);
+          const abertaIdx = catAberta === null ? catAtual : catAberta;
+          const Cab = ({ aberto, onClick, children }) => (
+            <button onClick={onClick} style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", background: "none", border: "none", color: C.text, cursor: "pointer", padding: 0, textAlign: "left", fontSize: 14, fontWeight: 800, letterSpacing: 1 }}>
+              <span style={{ color: C.violetHot, fontSize: 15 }}>{aberto ? "▾" : "▸"}</span>{children}
+            </button>
+          );
+          return (
+            <div style={{ marginTop: 16, display: "grid", gap: 14 }}>
+              <h2 style={{ margin: 0, fontSize: 20 }}>Ranking</h2>
 
-        {view === "ranking" && (
-          <div style={{ marginTop: 14, ...cardStyle, maxWidth: 780 }}>
-            <b style={{ fontSize: 13, letterSpacing: 1, color: C.dim }}>🎖 A ESCADA — 45 PATENTES EM 9 CATEGORIAS</b>
-            {CATEGORIAS.map((cat, ci) => (
-              <div key={cat.nome} style={{ marginTop: 14 }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 800, color: cat.cor, letterSpacing: 1.5, fontSize: 13 }}>
-                  <span>{cat.icone}</span>{cat.nome.toUpperCase()}
-                  <span style={{ color: C.dim2, fontWeight: 400, fontSize: 11, letterSpacing: 0 }}>· níveis {ci * 5 + 1}–{ci * 5 + 5}</span>
-                </div>
-                {cat.patentes.map((pt, pi) => {
-                  const lv = ci * 5 + pi + 1;
-                  const alcancado = nivel.level >= lv;
-                  const atual = nivel.level === lv || (lv === 45 && nivel.level > 45);
+              {/* --- colaboradores do mês --- */}
+              <div style={cardStyle}>
+                <Cab aberto={secoes.lista} onClick={() => setSecoes((s) => ({ ...s, lista: !s.lista }))}>👥 COLABORADORES — XP DO MÊS</Cab>
+                {secoes.lista && ranked.map((p, i) => (
+                  <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 14, padding: "10px 0", borderBottom: `1px solid ${C.border}55`, background: i === 0 ? `linear-gradient(90deg, ${C.gold}11, transparent)` : "none" }}>
+                    <div style={{ fontSize: 20, width: 34, textAlign: "center" }}>{["🥇", "🥈", "🥉"][i] || `${i + 1}º`}</div>
+                    <Avatar p={p} size={38} />
+                    <div style={{ flex: 1 }}>
+                      <b>{p.nick || p.name}</b>{gestor && p.nick && <span style={{ color: C.dim, fontWeight: 400, fontSize: 13 }}> — {p.name}</span>}
+                      <div style={{ fontSize: 12, color: patenteDe(nivelDe(saldo[p.id].xp).level).cor }}>
+                        {patenteDe(nivelDe(saldo[p.id].xp).level).icone} Nível {nivelDe(saldo[p.id].xp).level} · {patenteDe(nivelDe(saldo[p.id].xp).level).titulo}
+                      </div>
+                    </div>
+                    <b style={{ color: C.violetHot }}>{fmt(saldo[p.id].mes)} XP</b>
+                  </div>
+                ))}
+              </div>
+
+              {/* --- a escada com prêmios --- */}
+              <div style={cardStyle}>
+                <Cab aberto={secoes.escada} onClick={() => setSecoes((s) => ({ ...s, escada: !s.escada }))}>🎖 A ESCADA — 45 PATENTES · 9 CATEGORIAS</Cab>
+                {secoes.escada && CATEGORIAS.map((cat, ci) => {
+                  const nivelEntrada = ci * 5 + 1;
+                  const alcancouCat = nivel.level >= nivelEntrada;
+                  const aberta = abertaIdx === ci;
+                  const premio = dados.premios.find((p) => p.categoria === ci + 1);
+                  const meuResgate = dados.premiosResgatados.find((r) => r.categoria === ci + 1 && r.colaborador_id === me.id);
+                  const pendentesCat = dados.premiosResgatados.filter((r) => r.categoria === ci + 1 && !r.entregue);
                   return (
-                    <div key={pt} style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 0 6px 26px", borderBottom: `1px solid ${C.border}44`, fontSize: 12.5, opacity: alcancado ? 1 : 0.6 }}>
-                      <span style={{ width: 18, textAlign: "center" }}>{alcancado ? "✅" : "🔒"}</span>
-                      <b style={{ flex: 1, color: atual ? cat.cor : C.text }}>{pt}{atual && <span style={{ color: C.gold }}> ← você está aqui</span>}</b>
-                      <span style={{ color: C.dim }}>nível {lv}</span>
-                      <b style={{ color: C.blue, minWidth: 105, textAlign: "right" }}>{fmt(xpTotalParaNivel(lv))} XP</b>
+                    <div key={cat.nome} style={{ marginTop: 10, border: `1px solid ${aberta ? cat.cor + "55" : C.border}`, borderRadius: 12, padding: "10px 14px", opacity: alcancouCat ? 1 : 0.75 }}>
+                      <button onClick={() => setCatAberta(aberta ? -1 : ci)} style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", background: "none", border: "none", cursor: "pointer", padding: 0, textAlign: "left" }}>
+                        <span style={{ color: cat.cor }}>{aberta ? "▾" : "▸"}</span>
+                        <span style={{ fontWeight: 800, color: cat.cor, letterSpacing: 1.5, fontSize: 13 }}>{cat.icone} {cat.nome.toUpperCase()}</span>
+                        <span style={{ color: C.dim2, fontSize: 11 }}>· níveis {nivelEntrada}–{nivelEntrada + 4}</span>
+                        <span style={{ marginLeft: "auto", fontSize: 12 }}>{alcancouCat ? "✅" : "🔒"}</span>
+                      </button>
+                      {aberta && (
+                        <>
+                          {ci >= 1 && premio && (
+                            <div style={{ margin: "10px 0 4px", padding: "9px 12px", background: `${cat.cor}11`, border: `1px dashed ${cat.cor}55`, borderRadius: 10, fontSize: 12.5 }}>
+                              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                                <span>🎁 <b style={{ color: cat.cor }}>Recompensa da categoria:</b> {premio.descricao}</span>
+                                {alcancouCat && !meuResgate && !me.is_gestor && (
+                                  <button onClick={async () => {
+                                    const r = await resgatarPremio(ci + 1);
+                                    if (r.status === "ok") { notify("Recompensa resgatada! O gestor vai providenciar."); recarregar(); }
+                                    else notify(r.status === "ja_resgatado" ? "Você já resgatou esta recompensa." : r.msg || "Não foi possível resgatar.", C.orange);
+                                  }} style={{ ...btnStyle(cat.cor), padding: "6px 14px", fontSize: 11.5 }}>🎁 Resgatar recompensa</button>
+                                )}
+                                {meuResgate && <Chip color={meuResgate.entregue ? C.green : C.orange}>{meuResgate.entregue ? "Entregue ✓" : "Resgatada — aguardando entrega"}</Chip>}
+                              </div>
+                              {gestor && (
+                                <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap", alignItems: "center" }}>
+                                  <EditaPremio premio={premio} onSalvar={(d) => agir(salvarPremioCategoria(ci + 1, d), "Prêmio da categoria atualizado.")} />
+                                </div>
+                              )}
+                              {gestor && pendentesCat.length > 0 && pendentesCat.map((r) => {
+                                const p = colabs.find((c) => c.id === r.colaborador_id);
+                                return (
+                                  <div key={r.id} style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8, fontSize: 12 }}>
+                                    <span>⏳ <b>{p ? p.nome : "?"}</b> resgatou — providenciar</span>
+                                    <button onClick={() => agir(entregarPremio(r.id), "Entrega registrada.")} style={{ ...btnStyle(C.green, true), padding: "4px 10px", fontSize: 11 }}>Marcar entregue</button>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
+                          {cat.patentes.map((pt, pi) => {
+                            const lv = nivelEntrada + pi;
+                            const alcancado = nivel.level >= lv;
+                            const atual = nivel.level === lv || (lv === 45 && nivel.level > 45);
+                            return (
+                              <div key={pt} style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 0 6px 22px", borderBottom: `1px solid ${C.border}44`, fontSize: 12.5, opacity: alcancado ? 1 : 0.6 }}>
+                                <span style={{ width: 18, textAlign: "center" }}>{alcancado ? "✅" : "🔒"}</span>
+                                <b style={{ flex: 1, color: atual ? cat.cor : C.text }}>{pt}{atual && <span style={{ color: C.gold }}> ← você está aqui</span>}</b>
+                                <span style={{ color: C.dim }}>nível {lv}</span>
+                                <b style={{ color: C.blue, minWidth: 105, textAlign: "right" }}>{fmt(xpTotalParaNivel(lv))} XP</b>
+                              </div>
+                            );
+                          })}
+                        </>
+                      )}
+                    </div>
+                  );
+                })}
+                {secoes.escada && <div style={{ fontSize: 11.5, color: C.dim2, marginTop: 10 }}>LEI 3: patente alcançada é sua para sempre. Recompensa de categoria: 1 resgate por pessoa, validado pelo servidor.</div>}
+              </div>
+
+              {/* --- conquistas da equipe --- */}
+              <div style={cardStyle}>
+                <Cab aberto={secoes.feed} onClick={() => setSecoes((s) => ({ ...s, feed: !s.feed }))}>🏅 ÚLTIMAS CONQUISTAS DA EQUIPE</Cab>
+                {secoes.feed && dados.eventos.slice(0, 12).map((ev) => {
+                  const p = colabs.find((c) => c.id === ev.colaborador_id);
+                  if (!p) return null;
+                  return (
+                    <div key={ev.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 0", borderBottom: `1px solid ${C.border}55`, fontSize: 12.5 }}>
+                      <Avatar p={p} size={28} />
+                      <span style={{ flex: 1 }}><b style={{ color: C.blue }}>{rotulo(p)}</b> {ev.descricao || ev.origem}</span>
+                      {ev.xp !== 0 && <b style={{ color: ev.xp > 0 ? C.green : C.red }}>{ev.xp > 0 ? "+" : ""}{fmt(ev.xp)} XP</b>}
+                      <span style={{ color: C.dim2, fontSize: 11 }}>{ago(new Date(ev.criado_em).getTime())}</span>
                     </div>
                   );
                 })}
               </div>
-            ))}
-            <div style={{ fontSize: 11.5, color: C.dim2, marginTop: 10 }}>LEI 3: patente alcançada é sua para sempre. Um título novo a cada nível — 45 degraus até Criador da Ordem.</div>
-          </div>
-        )}
-
-        {view === "ranking" && (
-          <div style={{ marginTop: 14, ...cardStyle, maxWidth: 760 }}>
-            <b style={{ fontSize: 13, letterSpacing: 1, color: C.dim }}>ÚLTIMAS CONQUISTAS DA EQUIPE</b>
-            {dados.eventos.slice(0, 10).map((ev) => {
-              const p = colabs.find((c) => c.id === ev.colaborador_id);
-              if (!p) return null;
-              return (
-                <div key={ev.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 0", borderBottom: `1px solid ${C.border}55`, fontSize: 12.5 }}>
-                  <Avatar p={p} size={28} />
-                  <span style={{ flex: 1 }}><b style={{ color: C.blue }}>{rotulo(p)}</b> {ev.descricao || ev.origem}</span>
-                  {ev.xp !== 0 && <b style={{ color: ev.xp > 0 ? C.green : C.red }}>{ev.xp > 0 ? "+" : ""}{fmt(ev.xp)} XP</b>}
-                  <span style={{ color: C.dim2, fontSize: 11 }}>{ago(new Date(ev.criado_em).getTime())}</span>
-                </div>
-              );
-            })}
-          </div>
-        )}
+            </div>
+          );
+        })()}
 
         {/* ============ EXTRATO (histórico por data) ============ */}
         {view === "extrato" && (() => {
@@ -697,14 +758,14 @@ export default function App() {
             <p style={{ color: C.dim, fontSize: 13, margin: 0 }}>Modelos de missão com custo fixo: mesma função, mesmo esforço, mesmo XP — sempre. Clique em Publicar para lançar de novo sem pensar no valor. Só você vê esta aba.</p>
             {dados.modelos.length === 0 && <div style={{ ...cardStyle, color: C.dim2, fontSize: 13 }}>Colinha vazia. Ao criar uma missão, marque "salvar na colinha" — ou cadastre direto abaixo.</div>}
             {dados.modelos.map((md) => {
-              const destino = md.atribuida_a ? (colabs.find((c) => c.id === md.atribuida_a) || {}).nome?.split(" ")[0] || "?" : "Todos";
+              const destino = md.atribuidos && md.atribuidos.length > 0 ? md.atribuidos.map((id) => (colabs.find((c) => c.id === id) || {}).nome?.split(" ")[0] || "?").join(", ") : "Todos";
               return (
                 <div key={md.id} style={{ ...cardStyle, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
                   <div style={{ flex: 1, minWidth: 200 }}>
                     <b style={{ fontSize: 14 }}>{md.nome}</b>
                     <div style={{ fontSize: 12, color: C.dim }}>+{fmt(md.xp)} XP{md.moedas_ocultas > 0 && <span style={{ color: C.gold }}> · 🤫 {fmt(md.moedas_ocultas)} moedas</span>} · {md.tipo} · <span style={{ color: C.blue }}>→ {destino}</span></div>
                   </div>
-                  <button onClick={() => agir(criarMissao({ nome: md.nome, xp: md.xp, moedas_ocultas: md.moedas_ocultas, tipo: md.tipo, atribuida_a: md.atribuida_a, chefao_id: null }), `Missão '${md.nome}' publicada.`)} style={btnStyle(C.violetHot)}>▶ Publicar</button>
+                  <button onClick={() => agir(criarMissao({ nome: md.nome, xp: md.xp, moedas_ocultas: md.moedas_ocultas, tipo: md.tipo, atribuidos: md.atribuidos, chefao_id: null }), `Missão '${md.nome}' publicada.`)} style={btnStyle(C.violetHot)}>▶ Publicar</button>
                   <button onClick={() => { if (window.confirm("Excluir este modelo da colinha?")) agir(excluirModelo(md.id), "Modelo excluído."); }} style={{ ...btnStyle(C.red, true), padding: "7px 10px" }}>🗑</button>
                 </div>
               );
@@ -801,18 +862,35 @@ function Tela({ msg, extra }) {
 }
 
 /* ---------- formulário: nova missão (gestor) ---------- */
+function EscolheDestinos({ colabs, valor, onChange }) {
+  const marcado = (id) => valor.includes(id);
+  return (
+    <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+      <span style={{ fontSize: 11.5, color: C.dim }}>Para:</span>
+      <button onClick={() => onChange([])} style={{ ...btnStyle(C.violetHot, valor.length > 0), padding: "4px 12px", fontSize: 11 }}>Todos</button>
+      {colabs.filter((c) => !c.is_gestor).map((c) => (
+        <button key={c.id} onClick={() => onChange(marcado(c.id) ? valor.filter((x) => x !== c.id) : [...valor, c.id])}
+          style={{ ...btnStyle(C.blue, !marcado(c.id)), padding: "4px 12px", fontSize: 11 }}>
+          {c.nome.split(" ")[0]}
+        </button>
+      ))}
+      {valor.length > 0 && <span style={{ fontSize: 11, color: C.gold }}>XP integral para CADA um dos {valor.length} selecionado(s)</span>}
+    </div>
+  );
+}
+
 function NovaMissao({ chefao, colabs, onCriar }) {
   const [nome, setNome] = useState("");
   const [xp, setXp] = useState("200");
   const [moedas, setMoedas] = useState("");
   const [tipo, setTipo] = useState("fixa");
   const [vinculada, setVinculada] = useState(true);
-  const [destino, setDestino] = useState("");
+  const [destinos, setDestinos] = useState([]);
   const [colinha, setColinha] = useState(false);
   return (
     <div style={{ ...cardStyle, border: `1px dashed ${C.border2}` }}>
       <b style={{ fontSize: 13, letterSpacing: 1, color: C.dim }}>GESTOR — NOVA MISSÃO</b>
-      <div style={{ display: "grid", gridTemplateColumns: "2fr 80px 110px 1fr 1fr", gap: 10, marginTop: 10, alignItems: "center" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "2fr 80px 110px 1fr", gap: 10, marginTop: 10, alignItems: "center" }}>
         <input placeholder="Nome da missão" value={nome} onChange={(e) => setNome(e.target.value)} style={inputStyle} />
         <input placeholder="XP" value={xp} onChange={(e) => setXp(e.target.value.replace(/\D/g, ""))} style={inputStyle} />
         <input placeholder="Moedas 🤫" title="Oculto para a equipe" value={moedas} onChange={(e) => setMoedas(e.target.value.replace(/\D/g, ""))} style={inputStyle} />
@@ -821,10 +899,9 @@ function NovaMissao({ chefao, colabs, onCriar }) {
           <option value="diaria">Diária</option>
           <option value="esporadica">Esporádica</option>
         </select>
-        <select value={destino} onChange={(e) => setDestino(e.target.value)} style={inputStyle}>
-          <option value="">Para: Todos</option>
-          {colabs.filter((c) => !c.is_gestor).map((c) => <option key={c.id} value={c.id}>Para: {c.nome}</option>)}
-        </select>
+      </div>
+      <div style={{ marginTop: 10 }}>
+        <EscolheDestinos colabs={colabs} valor={destinos} onChange={setDestinos} />
       </div>
       <div style={{ display: "flex", gap: 16, marginTop: 10, alignItems: "center", flexWrap: "wrap" }}>
         <label style={{ fontSize: 12.5, color: C.dim, display: "flex", gap: 6, alignItems: "center" }}>
@@ -834,8 +911,8 @@ function NovaMissao({ chefao, colabs, onCriar }) {
           <input type="checkbox" checked={colinha} onChange={(e) => setColinha(e.target.checked)} /> 🗒 Salvar na colinha
         </label>
         <button disabled={!nome || !xp} onClick={() => {
-          onCriar({ nome, xp: Number(xp), moedas_ocultas: Number(moedas) || 0, tipo, chefao_id: vinculada && chefao ? chefao.id : null, atribuida_a: destino || null }, colinha);
-          setNome(""); setMoedas(""); setColinha(false);
+          onCriar({ nome, xp: Number(xp), moedas_ocultas: Number(moedas) || 0, tipo, chefao_id: vinculada && chefao ? chefao.id : null, atribuidos: destinos.length ? destinos : null }, colinha);
+          setNome(""); setMoedas(""); setColinha(false); setDestinos([]);
         }} style={{ ...btnStyle(C.violetHot), opacity: nome && xp ? 1 : 0.4, marginLeft: "auto" }}>Criar</button>
       </div>
       {!chefao && <div style={{ fontSize: 11.5, color: C.dim2, marginTop: 8 }}>Sem chefão ativo — convoque um na aba Chefão para vincular missões ☠.</div>}
@@ -848,11 +925,11 @@ function NovoModelo({ colabs, onCriar }) {
   const [xp, setXp] = useState("10");
   const [moedas, setMoedas] = useState("");
   const [tipo, setTipo] = useState("fixa");
-  const [destino, setDestino] = useState("");
+  const [destinos, setDestinos] = useState([]);
   return (
     <div style={{ ...cardStyle, border: `1px dashed ${C.border2}` }}>
       <b style={{ fontSize: 13, letterSpacing: 1, color: C.dim }}>NOVO MODELO</b>
-      <div style={{ display: "grid", gridTemplateColumns: "2fr 80px 110px 1fr 1fr auto", gap: 10, marginTop: 10, alignItems: "center" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "2fr 80px 110px 1fr auto", gap: 10, marginTop: 10, alignItems: "center" }}>
         <input placeholder="Nome (ex: Envio de relatório)" value={nome} onChange={(e) => setNome(e.target.value)} style={inputStyle} />
         <input placeholder="XP" value={xp} onChange={(e) => setXp(e.target.value.replace(/\D/g, ""))} style={inputStyle} />
         <input placeholder="Moedas 🤫" value={moedas} onChange={(e) => setMoedas(e.target.value.replace(/\D/g, ""))} style={inputStyle} />
@@ -861,11 +938,10 @@ function NovoModelo({ colabs, onCriar }) {
           <option value="diaria">Diária</option>
           <option value="esporadica">Esporádica</option>
         </select>
-        <select value={destino} onChange={(e) => setDestino(e.target.value)} style={inputStyle}>
-          <option value="">Para: Todos</option>
-          {colabs.filter((c) => !c.is_gestor).map((c) => <option key={c.id} value={c.id}>Para: {c.nome}</option>)}
-        </select>
-        <button disabled={!nome || !xp} onClick={() => { onCriar({ nome, xp: Number(xp), moedas_ocultas: Number(moedas) || 0, tipo, atribuida_a: destino || null }); setNome(""); setMoedas(""); }} style={{ ...btnStyle(C.violetHot), opacity: nome && xp ? 1 : 0.4 }}>Salvar</button>
+        <button disabled={!nome || !xp} onClick={() => { onCriar({ nome, xp: Number(xp), moedas_ocultas: Number(moedas) || 0, tipo, atribuidos: destinos.length ? destinos : null }); setNome(""); setMoedas(""); setDestinos([]); }} style={{ ...btnStyle(C.violetHot), opacity: nome && xp ? 1 : 0.4 }}>Salvar</button>
+      </div>
+      <div style={{ marginTop: 10 }}>
+        <EscolheDestinos colabs={colabs} valor={destinos} onChange={setDestinos} />
       </div>
     </div>
   );
@@ -967,5 +1043,17 @@ function TravaRoleta({ notify }) {
         <button onClick={async () => { const e = await salvarConfig("ip_roleta", ip); notify(e || (ip ? "Trava ativada para este IP." : "Trava removida — roleta liberada em qualquer rede."), e ? C.red : C.green); }} style={{ ...btnStyle(C.gold, true), padding: "8px 14px", fontSize: 12 }}>Salvar</button>
       </div>
     </div>
+  );
+}
+
+
+/* ---------- edição do prêmio de categoria (gestor) ---------- */
+function EditaPremio({ premio, onSalvar }) {
+  const [d, setD] = useState(premio.descricao);
+  return (
+    <>
+      <input value={d} onChange={(e) => setD(e.target.value)} placeholder="Descrição do prêmio" style={{ ...inputStyle, flex: 1, minWidth: 220, padding: "6px 10px", fontSize: 12 }} />
+      <button disabled={!d || d === premio.descricao} onClick={() => onSalvar(d)} style={{ ...btnStyle(C.gold, true), padding: "5px 12px", fontSize: 11, opacity: d && d !== premio.descricao ? 1 : 0.4 }}>Salvar prêmio</button>
+    </>
   );
 }
