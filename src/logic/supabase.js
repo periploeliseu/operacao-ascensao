@@ -7,7 +7,7 @@ import { createClient } from "@supabase/supabase-js";
      Quem protege os dados é o RLS dentro do banco.
    - NUNCA cole a service_role aqui.
    ============================================================ */
-const SUPABASE_URL = "COLE_AQUI_O_PROJECT_URL";
-const SUPABASE_ANON_KEY = "COLE_AQUI_A_CHAVE_ANON_PUBLIC";
+const SUPABASE_URL = "https://gldgcbnfxhlxddpydlbj.supabase.co";
+const SUPABASE_ANON_KEY = "sb_publishable_SUACHAVE";
 
 export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
