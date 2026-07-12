@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { C, reqFor, BOSS_CAP, SKINS, PETS, MARKET, titleFor, patenteDe, CATEGORIAS, fmt, ago } from "./data/constants.js";
+import { tocar } from "./logic/som.js";
 import { Avatar, HeroFigure, BossFigure } from "./components/figures.jsx";
 import { Bar, Chip, Coin, btnStyle, inputStyle, cardStyle } from "./components/ui.jsx";
 import BattleOverlay from "./components/BattleOverlay.jsx";
@@ -38,17 +39,33 @@ function nivelDe(totalXp) {
   return { level: lvl, xp, req: reqFor(lvl) };
 }
 
-/* Arte real do herói: /assets/heroi-{categoria}-{corpo}.png — plano B: boneco SVG */
+/* Herói no palco, em ordem de preferência:
+   1. Modelo 3D girando 360° — /assets/heroi-{cat}-{corpo}.glb (quando você gerar)
+   2. Recorte transparente     — /assets/heroi-{cat}-{corpo}.png
+   3. Boneco SVG (plano B eterno) */
 function HeroArt({ p, pat, height }) {
   const [erro, setErro] = useState(false);
+  const [glb, setGlb] = useState(false);
   const slug = pat.categoria.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, "");
-  const src = `/assets/heroi-${slug}-${p.corpo || "m"}.png`;
+  const corpo = p.corpo || "m";
+  const src3d = `/assets/heroi-${slug}-${corpo}.glb`;
+  const srcImg = `/assets/heroi-${slug}-${corpo}.png`;
+  useEffect(() => {
+    setGlb(false); setErro(false);
+    fetch(src3d, { method: "HEAD" })
+      .then((r) => setGlb(r.ok && !(r.headers.get("content-type") || "").includes("text/html")))
+      .catch(() => setGlb(false));
+  }, [src3d]);
+  if (glb) {
+    return (
+      <model-viewer src={src3d} camera-controls auto-rotate autoplay shadow-intensity="1" exposure="0.9"
+        style={{ width: height * 0.62, height, display: "block" }} />
+    );
+  }
   if (erro) return <HeroFigure p={p} height={height} />;
   return (
-    <img key={src} src={src} alt={pat.titulo} onError={() => setErro(true)}
-      style={{ height, display: "block", borderRadius: 18,
-        WebkitMaskImage: "radial-gradient(115% 102% at 50% 50%, #000 60%, transparent 99%)",
-        maskImage: "radial-gradient(115% 102% at 50% 50%, #000 60%, transparent 99%)" }} />
+    <img key={srcImg} src={srcImg} alt={pat.titulo} onError={() => setErro(true)}
+      style={{ height, display: "block", filter: "drop-shadow(0 6px 30px rgba(168,85,247,.45)) drop-shadow(0 0 12px rgba(56,189,248,.2))" }} />
   );
 }
 
@@ -82,6 +99,8 @@ export default function App() {
   const [wheel, setWheel] = useState(null);
   const [secoes, setSecoes] = useState({ lista: true, escada: false, feed: false });
   const [catAberta, setCatAberta] = useState(null); /* null = abre a categoria atual */
+  const [fundoOk, setFundoOk] = useState(false);
+  useEffect(() => { const i = new Image(); i.onload = () => setFundoOk(true); i.src = "/assets/fundo-palco.png"; }, []);
   const [novaSenha, setNovaSenha] = useState("");
 
   useEffect(() => { aoMudarSessao(setSessao); }, []);
@@ -160,6 +179,7 @@ export default function App() {
   const disponiveis = dados.missoes.filter((m) => statusMissao(m) === null).length;
 
   const aprovar = async (cl, sim) => {
+    tocar(sim ? "golpe" : "derrota", 0.5);
     /* prepara a animação ANTES de aplicar, para capturar o HP anterior */
     let luta = null;
     if (sim && chefao && chefao.status === "ativo" && cl.missoes?.chefao_id === chefao.id) {
@@ -168,7 +188,7 @@ export default function App() {
       if (d > 0) {
         const kind = hpAtual - d <= 0 ? "victory" : antes + d >= cap ? "combo" : "hit";
         luta = { pid: cl.colaborador_id, dmg: d, kind, hpBefore: hpAtual, maxHp: chefao.hp_max, cap };
-        if (kind === "victory") mudarStatusChefao(chefao.id, "derrotado");
+        if (kind === "victory") { tocar("vitoria", 0.7); mudarStatusChefao(chefao.id, "derrotado"); }
       }
     }
     await agir(avaliarConclusao(cl, sim), sim ? "Aprovada — prêmio lançado no extrato." : "Reprovada. A missão volta a ficar disponível.");
@@ -178,6 +198,7 @@ export default function App() {
   const girar = async () => {
     const r = await girarRoleta();
     if (r.status === "ok") {
+      tocar("moeda");
       setWheel({ spinning: true, rotulo: r.rotulo });
       setTimeout(() => { setWheel((w) => w && { ...w, spinning: false }); recarregar(); }, 2600);
     } else {
@@ -312,7 +333,9 @@ export default function App() {
 
         {/* ============ DASHBOARD (palco decorativo) ============ */}
         {view === "dashboard" && (
-          <div style={{ marginTop: 16, position: "relative", overflow: "hidden", borderRadius: 18, border: `1px solid ${C.border}`, minHeight: "74vh", display: "flex", alignItems: "center", justifyContent: "center", background: `radial-gradient(900px 520px at 50% 8%, #2a104f66 0%, transparent 60%), radial-gradient(700px 420px at 18% 92%, #10306055 0%, transparent 60%), linear-gradient(180deg, #0b1120, #070b16)` }}>
+          <div style={{ marginTop: 16, position: "relative", overflow: "hidden", borderRadius: 18, border: `1px solid ${C.border}`, minHeight: "74vh", display: "flex", alignItems: "center", justifyContent: "center", background: fundoOk
+            ? `linear-gradient(180deg, rgba(4,6,14,.35) 0%, rgba(4,6,14,.75) 100%), url(/assets/fundo-palco.png) center / cover no-repeat`
+            : `radial-gradient(900px 520px at 50% 8%, #2a104f66 0%, transparent 60%), radial-gradient(700px 420px at 18% 92%, #10306055 0%, transparent 60%), linear-gradient(180deg, #0b1120, #070b16)` }}>
             <div className="orbe o1" />
             <div className="orbe o2" />
             <div className="orbe o3" />
@@ -654,7 +677,7 @@ export default function App() {
                         {bloqueada ? <div style={{ fontSize: 12, color: C.dim }}>🔒 Nível {sk.lockedLevel}</div>
                           : equipada ? <Chip color={C.green}>Equipada</Chip>
                           : possui ? <button onClick={() => agir(salvarPerfil(me.id, { skin: sk.id }), "Skin equipada!")} style={btnStyle(C.violetHot, true)}>Equipar</button>
-                          : <button onClick={() => { if (saldo[me.id].moedas < sk.price) return notify("Moedas insuficientes. Farme mais.", C.red); agir(comprarSkin(me, sk), `Skin '${sk.name}' comprada e equipada!`); }} style={{ ...btnStyle(C.gold), display: "inline-flex", gap: 7, alignItems: "center" }}><Coin size={14} /> {fmt(sk.price)}</button>}
+                          : <button onClick={() => { if (saldo[me.id].moedas < sk.price) return notify("Moedas insuficientes. Farme mais.", C.red); { tocar("moeda"); agir(comprarSkin(me, sk), `Skin '${sk.name}' comprada e equipada!`); } }} style={{ ...btnStyle(C.gold), display: "inline-flex", gap: 7, alignItems: "center" }}><Coin size={14} /> {fmt(sk.price)}</button>}
                       </div>
                     </div>
                   );
@@ -671,7 +694,7 @@ export default function App() {
                       <b style={{ fontSize: 13, display: "block", margin: "8px 0" }}>{pt.name}</b>
                       {junto ? <Chip color={C.green}>Junto de você</Chip>
                         : possui ? <button onClick={() => agir(salvarPerfil(me.id, { pet: pt.id }), "Pet equipado!")} style={btnStyle(C.violetHot, true)}>Equipar</button>
-                        : <button onClick={() => { if (saldo[me.id].moedas < pt.price) return notify("Moedas insuficientes.", C.red); agir(comprarPet(me, pt), `${pt.name} adotado!`); }} style={{ ...btnStyle(C.gold), display: "inline-flex", gap: 7, alignItems: "center" }}><Coin size={14} /> {fmt(pt.price)}</button>}
+                        : <button onClick={() => { if (saldo[me.id].moedas < pt.price) return notify("Moedas insuficientes.", C.red); { tocar("moeda"); agir(comprarPet(me, pt), `${pt.name} adotado!`); } }} style={{ ...btnStyle(C.gold), display: "inline-flex", gap: 7, alignItems: "center" }}><Coin size={14} /> {fmt(pt.price)}</button>}
                     </div>
                   );
                 })}
@@ -690,7 +713,7 @@ export default function App() {
                 <div key={it.id} style={{ ...cardStyle, textAlign: "center" }}>
                   <div style={{ fontSize: 38 }}>{it.icon}</div>
                   <b style={{ fontSize: 13, display: "block", margin: "8px 0" }}>{it.name}</b>
-                  <button onClick={() => { if (saldo[me.id].moedas < it.price) return notify("Moedas insuficientes. LEI 2.", C.red); agir(resgatarItem(me, it), "Resgate registrado! O gestor vai providenciar."); }} style={{ ...btnStyle(C.gold), display: "inline-flex", gap: 7, alignItems: "center" }}><Coin size={14} /> {fmt(it.price)}</button>
+                  <button onClick={() => { if (saldo[me.id].moedas < it.price) return notify("Moedas insuficientes. LEI 2.", C.red); { tocar("moeda"); agir(resgatarItem(me, it), "Resgate registrado! O gestor vai providenciar."); } }} style={{ ...btnStyle(C.gold), display: "inline-flex", gap: 7, alignItems: "center" }}><Coin size={14} /> {fmt(it.price)}</button>
                 </div>
               ))}
             </div>
