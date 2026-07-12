@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { C, reqFor, BOSS_CAP, SKINS, PETS, MARKET, titleFor, patenteDe, CATEGORIAS, fmt, ago } from "./data/constants.js";
-import { tocar } from "./logic/som.js";
+import { tocar, trilhaIniciar, trilhaParar, trilhaPreferencia } from "./logic/som.js";
 import { Avatar, HeroFigure, BossFigure } from "./components/figures.jsx";
 import { Bar, Chip, Coin, btnStyle, inputStyle, cardStyle } from "./components/ui.jsx";
 import BattleOverlay from "./components/BattleOverlay.jsx";
@@ -100,6 +100,15 @@ export default function App() {
   const [secoes, setSecoes] = useState({ lista: true, escada: false, feed: false });
   const [catAberta, setCatAberta] = useState(null); /* null = abre a categoria atual */
   const [fundoOk, setFundoOk] = useState(false);
+  const [trilhaOn, setTrilhaOn] = useState(false);
+  useEffect(() => {
+    /* vindo do login, o gesto já aconteceu e a música segue; sessão salva
+       (abriu direto no jogo) precisa de 1 clique — mesma regra do navegador */
+    const ligar = () => { if (trilhaPreferencia() !== "off") trilhaIniciar().then(setTrilhaOn); };
+    ligar();
+    window.addEventListener("pointerdown", ligar, { once: true });
+    return () => window.removeEventListener("pointerdown", ligar);
+  }, []);
   useEffect(() => { const i = new Image(); i.onload = () => setFundoOk(true); i.src = "/assets/fundo-palco.png"; }, []);
   const [novaSenha, setNovaSenha] = useState("");
 
@@ -273,6 +282,7 @@ export default function App() {
               <div style={{ fontSize: 11, color: gestor ? C.gold : C.dim }}>{gestor ? "Gestor" : me.funcao}</div>
             </div>
           </div>
+          <button onClick={() => { if (trilhaOn) { trilhaParar(); setTrilhaOn(false); } else trilhaIniciar().then(setTrilhaOn); }} style={{ ...btnStyle(C.blue, true), width: "100%", marginBottom: 8 }}>{trilhaOn ? "🔊 Trilha: tocando" : "🔇 Trilha: silenciada"}</button>
           <button onClick={() => { setNovaSenha(""); setSenhaModal(true); }} style={{ ...btnStyle(C.violetHot, true), width: "100%", marginBottom: 8 }}>🔑 Trocar senha</button>
           <button onClick={() => sair()} style={{ ...btnStyle(C.dim, true), width: "100%" }}>Sair da conta</button>
         </div>
@@ -334,13 +344,33 @@ export default function App() {
         {/* ============ DASHBOARD (palco decorativo) ============ */}
         {view === "dashboard" && (
           <div style={{ marginTop: 16, position: "relative", overflow: "hidden", borderRadius: 18, border: `1px solid ${C.border}`, minHeight: "74vh", display: "flex", alignItems: "center", justifyContent: "center", background: fundoOk
-            ? `linear-gradient(180deg, rgba(4,6,14,.35) 0%, rgba(4,6,14,.75) 100%), url(/assets/fundo-palco.png) center / cover no-repeat`
+            ? `linear-gradient(180deg, rgba(4,6,14,.32) 0%, rgba(4,6,14,.68) 100%), url(/assets/fundo-palco.png) center / cover no-repeat`
             : `radial-gradient(900px 520px at 50% 8%, #2a104f66 0%, transparent 60%), radial-gradient(700px 420px at 18% 92%, #10306055 0%, transparent 60%), linear-gradient(180deg, #0b1120, #070b16)` }}>
+
+            {/* --- camadas de vida sobre o cenário (só quando há fundo real) --- */}
+            {fundoOk && (
+              <>
+                {/* fumaça subindo dos reatores */}
+                <div className="cena-fumaca" style={{ left: "23%" }} />
+                <div className="cena-fumaca" style={{ left: "46%", animationDelay: "3s", opacity: .5 }} />
+                <div className="cena-fumaca" style={{ left: "66%", animationDelay: "1.5s" }} />
+                {/* pulsação dos reatores (azul à esq., vermelho no centro) */}
+                <div className="cena-glow" style={{ left: "23%", top: "48%", background: "radial-gradient(circle, rgba(56,189,248,.5), transparent 70%)" }} />
+                <div className="cena-glow" style={{ left: "46%", top: "52%", background: "radial-gradient(circle, rgba(255,60,60,.5), transparent 70%)", animationDelay: ".7s" }} />
+                <div className="cena-glow" style={{ left: "66%", top: "52%", background: "radial-gradient(circle, rgba(255,60,60,.45), transparent 70%)", animationDelay: "1.3s" }} />
+                {/* faíscas caindo dos cantos inferiores */}
+                {[...Array(10)].map((_, i) => (
+                  <div key={i} className="cena-faisca" style={{ left: i < 5 ? `${4 + i * 3}%` : `${85 + (i - 5) * 3}%`, animationDelay: `${i * 0.9}s`, animationDuration: `${2.4 + (i % 3) * 0.8}s` }} />
+                ))}
+                {/* flicker geral das telas holográficas */}
+                <div className="cena-flicker" />
+              </>
+            )}
+
             <div className="orbe o1" />
             <div className="orbe o2" />
             <div className="orbe o3" />
-            <div className="grade" />
-            <div style={{ position: "relative", textAlign: "center", padding: 20 }}>
+            <div style={{ position: "relative", textAlign: "center", padding: 20, zIndex: 4 }}>
               <div className="aura" style={{ position: "relative", display: "inline-block" }}>
                 <HeroArt p={me} pat={pat} height={430} />
                 {me.pet && <div className="pet-float" style={{ position: "absolute", bottom: 24, right: -46, fontSize: 52 }}>{(PETS.find((x) => x.id === me.pet) || {}).icon}</div>}
