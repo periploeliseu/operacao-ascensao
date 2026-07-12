@@ -1,7 +1,8 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { C } from "./data/constants.js";
 import { btnStyle, inputStyle, cardStyle } from "./components/ui.jsx";
 import { entrar } from "./logic/api.js";
+import { trilhaIniciar, trilhaParar, trilhaPreferencia } from "./logic/som.js";
 
 /* Tela-título cinematográfica.
    Arquivos em public/assets/ (todos opcionais — o jogo nunca quebra por falta de arte):
@@ -11,7 +12,6 @@ import { entrar } from "./logic/api.js";
    - iniciar.mp3   efeito ao apertar INICIAR (opcional) */
 const CAPA = "/assets/capa.png";
 const VIDEO = "/assets/capa.mp4";
-const AMBIENTE = "/assets/ambiente.mp3";
 const STING = "/assets/iniciar.mp3";
 
 /* Pontos de brilho sobre a arte (percentuais RELATIVOS AO QUADRO — ajuste fino aqui) */
@@ -32,7 +32,6 @@ export default function Login() {
   const [capaOk, setCapaOk] = useState(false);
   const [videoOk, setVideoOk] = useState(false);
   const [somAtivo, setSomAtivo] = useState(false);
-  const amb = useRef(null);
 
   /* sonda a arte e o vídeo (se não existirem, cai no plano B em silêncio) */
   useEffect(() => {
@@ -45,17 +44,14 @@ export default function Login() {
     v.load();
   }, []);
 
-  /* trilha ambiente: navegadores SÓ liberam áudio após o 1º gesto do usuário */
+  /* trilha ambiente compartilhada: navegadores SÓ liberam áudio após o 1º gesto.
+     Repare que NÃO pausamos ao sair desta tela — a música atravessa o login. */
   useEffect(() => {
-    const a = new Audio(AMBIENTE);
-    a.loop = true;
-    a.volume = 0.35;
-    amb.current = a;
-    const ligar = () => a.play().then(() => setSomAtivo(true)).catch(() => {});
+    const ligar = () => { if (trilhaPreferencia() !== "off") trilhaIniciar().then(setSomAtivo); };
+    ligar(); /* se o navegador já liberou (sessão antiga), toca direto */
     window.addEventListener("pointerdown", ligar, { once: true });
     window.addEventListener("keydown", ligar, { once: true });
     return () => {
-      a.pause();
       window.removeEventListener("pointerdown", ligar);
       window.removeEventListener("keydown", ligar);
     };
@@ -63,10 +59,8 @@ export default function Login() {
 
   const alternarSom = (e) => {
     e.stopPropagation();
-    const a = amb.current;
-    if (!a) return;
-    if (somAtivo) { a.pause(); setSomAtivo(false); }
-    else a.play().then(() => setSomAtivo(true)).catch(() => {});
+    if (somAtivo) { trilhaParar(); setSomAtivo(false); }
+    else trilhaIniciar().then(setSomAtivo);
   };
 
   const submeter = async () => {
