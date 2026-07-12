@@ -95,11 +95,15 @@ export default function Login() {
         {/* camada 1: a própria arte, desfocada, preenchendo as bordas */}
         <div style={{ position: "absolute", inset: 0, backgroundImage: `url(${CAPA})`, backgroundSize: "cover", backgroundPosition: "center", filter: "blur(28px) brightness(.4)", transform: "scale(1.15)" }} />
         {/* camada 2: a arte INTEIRA, sempre enquadrada, com zoom lento */}
-        <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
-          <div className="zoom-lento" style={{ position: "relative", width: "min(100vw, 150vh)", aspectRatio: "3 / 2" }}>
-            {videoOk
-              ? <video src={VIDEO} autoPlay muted loop playsInline style={{ width: "100%", height: "100%", objectFit: "contain", display: "block" }} />
-              : <img src={CAPA} alt="Operação Ascensão" style={{ width: "100%", height: "100%", objectFit: "contain", display: "block" }} />}
+        {/* A arte ocupa TODA a largura; a proporção 3:2 é preservada e o excedente
+            vertical é cortado com viés: pouco do teto, mais do chão (reflexo + texto). */}
+        <div style={{ position: "absolute", inset: 0, overflow: "hidden", display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <div style={{ position: "relative", flex: "none", width: "100vw", aspectRatio: "3 / 2", transform: "translateY(5.5%)" }}>
+            <div className="zoom-lento" style={{ position: "absolute", inset: 0 }}>
+              {videoOk
+                ? <video src={VIDEO} autoPlay muted loop playsInline style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+                : <img src={CAPA} alt="Operação Ascensão" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />}
+            </div>
             {/* olhos e núcleos de energia pulsando sobre a arte */}
             {!videoOk && BRILHOS.map((g, i) => (
               <div key={i} className="brilho" style={{ left: `${g.x}%`, top: `${g.y}%`, width: g.size, height: g.size, background: `radial-gradient(circle, ${g.cor} 0%, transparent 70%)`, animationDuration: `${g.dur}s`, animationDelay: `${g.delay || 0}s` }} />
