@@ -25,7 +25,7 @@ function traduzErro(msg) {
 
 /* ---------- carga geral ---------- */
 export async function carregarTudo() {
-  const [c, m, ch, ev, cl, id, rg, md, pc, pr] = await Promise.all([
+  const [c, m, ch, ev, cl, id, rg, md, pc, pr, ar] = await Promise.all([
     supabase.from("colaboradores").select("*").order("nome"),
     supabase.from("missoes").select("*").eq("ativa", true).order("criado_em"),
     supabase.from("chefoes").select("*").neq("status", "arquivado").order("criado_em", { ascending: false }).limit(1),
@@ -36,10 +36,11 @@ export async function carregarTudo() {
     supabase.from("modelos_missao").select("*").order("nome"),
     supabase.from("premios_categoria").select("*").order("categoria"),
     supabase.from("premios_resgatados").select("*").order("resgatado_em", { ascending: false }),
+    supabase.from("arsenal_viloes").select("*").order("criado_em", { ascending: false }),
   ]);
   const erro = c.error || m.error || ch.error || ev.error || cl.error;
   if (erro) throw erro;
-  return { colabs: c.data, missoes: m.data, chefao: ch.data[0] || null, eventos: ev.data, conclusoes: cl.data, ideias: id.data || [], resgates: rg.data || [], modelos: md.data || [], premios: pc.data || [], premiosResgatados: pr.data || [] };
+  return { colabs: c.data, missoes: m.data, chefao: ch.data[0] || null, eventos: ev.data, conclusoes: cl.data, ideias: id.data || [], resgates: rg.data || [], modelos: md.data || [], premios: pc.data || [], premiosResgatados: pr.data || [], arsenal: ar.data || [] };
 }
 
 /* ---------- colaborador ---------- */
@@ -89,6 +90,7 @@ export async function convocarChefao(b) {
     nome: b.name, foco: b.focus || null, hp_max: b.maxHp,
     prazo: new Date(b.deadline).toISOString(),
     premio_oculto: b.reward, extra: b.extra || null,
+    vilao_id: b.vilaoId || null,
   });
   return error?.message || null;
 }
@@ -215,5 +217,15 @@ export async function salvarPremioCategoria(categoria, descricao) {
 }
 export async function entregarPremio(id) {
   const { error } = await supabase.from("premios_resgatados").update({ entregue: true }).eq("id", id);
+  return error?.message || null;
+}
+
+/* ---------- arsenal de vilões ---------- */
+export async function criarVilao(nome, imagem, descricao) {
+  const { error } = await supabase.from("arsenal_viloes").insert({ nome, imagem, descricao });
+  return error?.message || null;
+}
+export async function excluirVilao(id) {
+  const { error } = await supabase.from("arsenal_viloes").delete().eq("id", id);
   return error?.message || null;
 }

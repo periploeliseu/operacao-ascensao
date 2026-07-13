@@ -53,7 +53,7 @@ function AddMission({ onAdd }) {
   );
 }
 
-function BossForm({ onSummon }) {
+function BossForm({ onSummon, arsenal = [] }) {
   const [name, setName] = useState("");
   const [focus, setFocus] = useState("");
   const [hp, setHp] = useState("6000");
@@ -61,9 +61,31 @@ function BossForm({ onSummon }) {
   const [reward, setReward] = useState("");
   const [extra, setExtra] = useState("");
   const [kind, setKind] = useState("Chefão da Semana");
+  const [vilaoId, setVilaoId] = useState("");
+  const vilao = arsenal.find((v) => v.id === vilaoId);
   return (
     <div style={{ ...cardStyle, border: `1px dashed ${C.border2}`, marginTop: 14 }}>
       <b style={{ fontSize: 13, letterSpacing: 1, color: C.dim }}>GESTOR — CONVOCAR NOVO CHEFÃO</b>
+
+      {/* escolha do vilão do arsenal */}
+      {arsenal.length > 0 && (
+        <div style={{ margin: "12px 0" }}>
+          <div style={{ fontSize: 12, color: C.dim, marginBottom: 8 }}>Escolha o vilão do arsenal (ou deixe nenhum para o desenho padrão):</div>
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+            {arsenal.map((v) => (
+              <button key={v.id} onClick={() => setVilaoId(vilaoId === v.id ? "" : v.id)}
+                style={{ width: 92, padding: 6, borderRadius: 10, cursor: "pointer",
+                  background: vilaoId === v.id ? `${C.red}22` : "transparent",
+                  border: vilaoId === v.id ? `2px solid ${C.red}` : `1px solid ${C.border}` }}>
+                <img src={`/assets/viloes/${v.imagem}`} alt={v.nome} style={{ width: "100%", height: 70, objectFit: "cover", borderRadius: 6 }}
+                  onError={(e) => { e.target.style.display = "none"; }} />
+                <div style={{ fontSize: 10, color: C.text, marginTop: 4, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{v.nome}</div>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 10 }}>
         <input placeholder="Nome (ex: Algoz da Desorganização)" value={name} onChange={(e) => setName(e.target.value)} style={inputStyle} />
         <input placeholder="Foco da semana (ex: liberar só equipamento bom)" value={focus} onChange={(e) => setFocus(e.target.value)} style={inputStyle} />
@@ -75,7 +97,7 @@ function BossForm({ onSummon }) {
           <option>Chefão da Semana</option>
           <option>Chefão do Mês</option>
         </select>
-        <button disabled={!name || !hp || !days} onClick={() => onSummon({ name, focus, maxHp: Number(hp), deadline: Date.now() + Number(days) * 864e5, reward: reward || "Prêmio surpresa", extra, kind })} style={{ ...btnStyle(C.red), opacity: name && hp && days ? 1 : 0.4 }}>⚔ Convocar</button>
+        <button disabled={!name || !hp || !days} onClick={() => onSummon({ name: name || (vilao?.nome ?? ""), focus, maxHp: Number(hp), deadline: Date.now() + Number(days) * 864e5, reward: reward || "Prêmio surpresa", extra, kind, vilaoId: vilaoId || null })} style={{ ...btnStyle(C.red), opacity: name && hp && days ? 1 : 0.4 }}>⚔ Convocar</button>
       </div>
       <div style={{ fontSize: 11.5, color: C.dim2, marginTop: 8 }}>A cota individual = HP ÷ nº de colaboradores. A equipe só vê "???" no prêmio — a curiosidade é parte da mecânica.</div>
     </div>

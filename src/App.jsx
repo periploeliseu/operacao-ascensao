@@ -15,6 +15,7 @@ import {
   girarRoleta, meuIp, lerConfig, salvarConfig,
   excluirIdeia, criarModelo, excluirModelo,
   resgatarPremio, salvarPremioCategoria, entregarPremio,
+  criarVilao, excluirVilao,
 } from "./logic/api.js";
 
 /* ============================================================
@@ -230,6 +231,7 @@ export default function App() {
     ["provas", "✎", "Provas"],
     ["colinha", "🗒", "Colinha"],
     ["equipe", "👥", "Equipe"],
+    ["arsenal", "👹", "Arsenal"],
   ] : [];
   const NAV_JOGO = [
     ["dashboard", "▦", "Dashboard"],
@@ -463,7 +465,12 @@ export default function App() {
                     ? <b>{chefao.premio_oculto}{chefao.extra ? ` + ${chefao.extra}` : ""}{gestor && chefao.status !== "derrotado" ? " (oculto p/ equipe)" : ""}</b>
                     : <b>??? — derrotem o chefão para descobrir</b>}
                 </div>
-                <BossFigure size={200} />
+                {(() => {
+                  const v = dados.arsenal.find((x) => x.id === chefao.vilao_id);
+                  return v
+                    ? <img src={`/assets/viloes/${v.imagem}`} alt={v.nome} style={{ width: 260, maxWidth: "70%", filter: "drop-shadow(0 8px 30px rgba(248,113,122,.5))" }} onError={(e) => { e.target.replaceWith(Object.assign(document.createElement("div"), { textContent: "☠" })); }} />
+                    : <BossFigure size={200} />;
+                })()}
                 <div style={{ maxWidth: 480, margin: "10px auto" }}>
                   <Bar value={hpAtual} max={chefao.hp_max} color={C.red} h={14} />
                   <div style={{ fontSize: 13, color: C.dim, marginTop: 5 }}>
@@ -507,7 +514,7 @@ export default function App() {
                 })}
               </div>
             )}
-            {gestor && !chefao && <BossForm onSummon={(b) => agir(convocarChefao(b), "Chefão convocado. Vincule as missões ☠ a ele.")} />}
+            {gestor && !chefao && <BossForm arsenal={dados.arsenal} onSummon={(b) => agir(convocarChefao(b), "Chefão convocado. Vincule as missões ☠ a ele.")} />}
           </div>
         )}
 
@@ -848,6 +855,26 @@ export default function App() {
           </div>
         )}
 
+        {/* ============ ARSENAL DE VILÕES (gestor) ============ */}
+        {view === "arsenal" && gestor && (
+          <div style={{ marginTop: 16, display: "grid", gap: 14 }}>
+            <h2 style={{ margin: 0, fontSize: 20 }}>👹 Arsenal de Vilões</h2>
+            <p style={{ color: C.dim, fontSize: 13, margin: 0 }}>Cadastre os vilões uma vez e reutilize na convocação do chefão. Suba as imagens em <b>public/assets/viloes/</b> no GitHub (ex: vilao-aranha.png) e informe o nome do arquivo aqui.</p>
+            <NovoVilao onCriar={(nome, img, desc) => agir(criarVilao(nome, img, desc), "Vilão adicionado ao arsenal.")} />
+            {dados.arsenal.length === 0 && <div style={{ ...cardStyle, color: C.dim2, fontSize: 13 }}>Arsenal vazio. Cadastre o primeiro vilão acima.</div>}
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: 14 }}>
+              {dados.arsenal.map((v) => (
+                <div key={v.id} style={{ ...cardStyle, textAlign: "center" }}>
+                  <img src={`/assets/viloes/${v.imagem}`} alt={v.nome} style={{ width: "100%", height: 130, objectFit: "cover", borderRadius: 8 }} onError={(e) => { e.target.style.opacity = 0.2; }} />
+                  <b style={{ fontSize: 13, display: "block", marginTop: 8 }}>{v.nome}</b>
+                  {v.descricao && <div style={{ fontSize: 11.5, color: C.dim, marginTop: 2 }}>{v.descricao}</div>}
+                  <button onClick={() => { if (window.confirm(`Remover '${v.nome}' do arsenal?`)) agir(excluirVilao(v.id), "Vilão removido."); }} style={{ ...btnStyle(C.red, true), padding: "5px 12px", fontSize: 11, marginTop: 8 }}>🗑 Remover</button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* ============ MANUAL ============ */}
         {view === "manual" && (
           <div style={{ marginTop: 16, display: "grid", gap: 12, maxWidth: 780 }}>
@@ -1129,5 +1156,29 @@ function EditaPremio({ premio, onSalvar }) {
       <input value={d} onChange={(e) => setD(e.target.value)} placeholder="Descrição do prêmio" style={{ ...inputStyle, flex: 1, minWidth: 220, padding: "6px 10px", fontSize: 12 }} />
       <button disabled={!d || d === premio.descricao} onClick={() => onSalvar(d)} style={{ ...btnStyle(C.gold, true), padding: "5px 12px", fontSize: 11, opacity: d && d !== premio.descricao ? 1 : 0.4 }}>Salvar prêmio</button>
     </>
+  );
+}
+
+
+/* ---------- cadastro de vilão no arsenal (gestor) ---------- */
+function NovoVilao({ onCriar }) {
+  const [nome, setNome] = useState("");
+  const [img, setImg] = useState("");
+  const [desc, setDesc] = useState("");
+  return (
+    <div style={{ ...cardStyle, border: `1px dashed ${C.border2}` }}>
+      <b style={{ fontSize: 13, letterSpacing: 1, color: C.dim }}>NOVO VILÃO</b>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr auto", gap: 10, marginTop: 10, alignItems: "center" }}>
+        <input placeholder="Nome (ex: Antena Predadora)" value={nome} onChange={(e) => setNome(e.target.value)} style={inputStyle} />
+        <input placeholder="Arquivo (ex: vilao-aranha.png)" value={img} onChange={(e) => setImg(e.target.value.trim())} style={inputStyle} />
+        <input placeholder="Tema/foco (opcional)" value={desc} onChange={(e) => setDesc(e.target.value)} style={inputStyle} />
+        <button disabled={!nome || !img} onClick={() => { onCriar(nome, img, desc); setNome(""); setImg(""); setDesc(""); }} style={{ ...btnStyle(C.red), opacity: nome && img ? 1 : 0.4 }}>Adicionar</button>
+      </div>
+      {img && (
+        <div style={{ marginTop: 10, fontSize: 12, color: C.dim }}>
+          Prévia: <img src={`/assets/viloes/${img}`} alt="prévia" style={{ height: 80, borderRadius: 6, verticalAlign: "middle", marginLeft: 8 }} onError={(e) => { e.target.style.display = "none"; e.target.insertAdjacentText("afterend", " (arquivo ainda não encontrado — suba em public/assets/viloes/)"); }} />
+        </div>
+      )}
+    </div>
   );
 }
